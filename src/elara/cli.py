@@ -1,34 +1,41 @@
 import typer
-from rich.console import Console
+
+from elara import __version__
+from elara.core.engine import ElaraEngine
+
 
 app = typer.Typer()
-console = Console()
+engine = ElaraEngine()
 
 
-def build_greeting(name: str | None = None) -> str:
-    """Build a greeting message."""
-    if name:
-        return f"Salam, {name}! Mən ELARA."
+def build_greeting(ad: str | None = None) -> str:
+    """Build the standard ELARA greeting."""
+
+    if ad:
+        return f"Salam, {ad}! Mən ELARA."
+
     return "Salam! Mən ELARA."
 
 
 @app.command()
-def salam(
-    ad: str | None = typer.Option(
-        None,
-        "--ad",
-        help="Salamlanacaq şəxsin adı.",
-    ),
-) -> None:
-    """ELARA-nın salamlamasını göstər."""
-    console.print(build_greeting(ad))
+def salam(ad: str = typer.Option(None, "--ad")) -> None:
+    """ELARA ilə salamlaş."""
+
+    command = "salam"
+
+    if ad:
+        command = f"salam {ad}"
+
+    result = engine.run(command)
+
+    if result.success:
+        typer.echo(build_greeting(ad))
+    else:
+        typer.echo(result.message)
 
 
 @app.command()
 def version() -> None:
     """ELARA versiyasını göstər."""
-    console.print("ELARA v0.1.0")
 
-
-if __name__ == "__main__":
-    app()
+    typer.echo(f"ELARA v{__version__}")
