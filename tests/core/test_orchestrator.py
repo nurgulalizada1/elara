@@ -80,11 +80,50 @@ def test_orchestrator_uses_profile_for_name_question():
     assert response == "Sənin adın Nurguldur."
 
 
-def test_orchestrator_updates_name():
+def test_orchestrator_requires_confirmation_before_name_change():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Mənim adım Nurguldur")
+
+    response = orchestrator.handle("Mənim adım Aylindir")
+
+    assert response == (
+        "Axı əvvəl adının Nurguldur olduğunu demişdin. "
+        "Bunu Aylin olaraq dəyişək?"
+    )
+    assert orchestrator.profile.name == "Nurguldur"
+    assert orchestrator.profile.pending_name == "Aylindir"
+
+
+def test_orchestrator_confirms_name_change():
     provider = MockLLMProvider()
     orchestrator = ElaraOrchestrator(provider)
 
     orchestrator.handle("Mənim adım Nurguldur")
     orchestrator.handle("Mənim adım Aylindir")
 
+    response = orchestrator.handle("Bəli")
+
+    assert response == (
+        "Oldu. Bundan sonra səni Aylin kimi yadda saxlayacağam."
+    )
     assert orchestrator.profile.name == "Aylindir"
+    assert orchestrator.profile.pending_name is None
+
+
+def test_orchestrator_rejects_name_change():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Mənim adım Nurguldur")
+    orchestrator.handle("Mənim adım Aylindir")
+
+    response = orchestrator.handle("Xeyr")
+
+    assert response == (
+        "Oldu, adını dəyişmirəm. "
+        "Sənin adın Nurguldur olaraq qalır."
+    )
+    assert orchestrator.profile.name == "Nurguldur"
+    assert orchestrator.profile.pending_name is None

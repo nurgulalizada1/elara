@@ -24,6 +24,8 @@ class ElaraOrchestrator:
         self.memory = memory or ConversationMemory()
         self.profile = profile or UserProfile()
 
+        self.profile.pending_name: str | None = None
+
     def handle(self, user_text: str) -> str:
         """Handle a user message."""
 
@@ -32,19 +34,28 @@ class ElaraOrchestrator:
 
         self.memory.add("user", user_text)
 
-        # First check whether this is a simple memory question.
-        # We do this BEFORE extracting profile data so that
-        # "Mənim adım nədir?" cannot overwrite the stored name.
+        # First handle pending confirmation.
+        confirmation_response = self._handle_confirmation(user_text)
+
+        if confirmation_response is not None:
+            self.memory.add("assistant", confirmation_response)
+            return confirmation_response
+
+        # Handle simple factual questions using structured memory.
         local_response = self._handle_local_memory(user_text)
 
         if local_response is not None:
             self.memory.add("assistant", local_response)
             return local_response
 
-        # Extract structured facts from normal user statements.
-        self._update_profile(user_text)
+        # Extract structured facts from normal statements.
+        name_response = self._update_profile(user_text)
 
-        # Build conversation prompt and ask the provider.
+        if name_response is not None:
+            self.memory.add("assistant", name_response)
+            return name_response
+
+        # Otherwise use the LLM provider.
         prompt = self._build_prompt()
         response = self.provider.generate(prompt)
 
@@ -52,24 +63,100 @@ class ElaraOrchestrator:
 
         return response
 
-    def _update_profile(self, user_text: str) -> None:
-        """Extract simple structured facts from the user's message."""
+    def _update_profile(self, user_text: str) -> str | None:
+        """Extract and possibly update the user's name."""
 
         normalized = user_text.strip()
 
         prefix = "Mənim adım "
 
-        if normalized.lower().startswith(prefix.lower()):
-            name = normalized[len(prefix):].strip()
-            name = name.rstrip("?!., ")
+        if not normalized.lower().startswith(prefix.lower()):
+            return None
 
-            # Do not save question words as a name.
-            if name and name.lower() not in {
-                "nədir",
-                "nədir?",
-                "nədi",
-            }:
-                self.profile.name = name
+        name = normalized[len(prefix):].strip()
+
+        # Remove only punctuation, NOT letters from the name.
+        name = name.rstrip("?!., ")
+
+        # Do not treat a question as a name.
+        if name.lower() in {"nədir", "nədi"}:
+            return None
+
+        if not name:
+            return None
+
+        # No previous name: save immediately.
+        if self.profile.name is None:
+            self.profile.name = name
+            return None
+
+        # Same name: nothing to change.
+        if self.profile.name.casefold() == name.casefold():
+            return None
+
+        # Different name: ask for confirmation.
+        self.profile.pending_name = name
+
+        return (
+            f"Axı əvvəl adının {self.profile.name} olduğunu demişdin. "
+            f"Bunu {self._display_name_without_dir(name)} olaraq dəyişək?"
+        )
+
+    def _display_name_without_dir(self, name: str) -> str:
+        """Return a natural form for confirmation text."""
+
+        if name.lower().endswith("dir") and len(name) > 3:
+            return name[:-3]
+
+        return name
+
+    def _handle_confirmation(self, user_text: str) -> str | None:
+        """Handle confirmation or rejection of a pending name change."""
+
+        if self.profile.pending_name is None:
+            return None
+
+        normalized = user_text.strip().lower().rstrip("?!., ")
+
+        yes_answers = {
+            "bəli",
+            "belə",
+            "hə",
+            "hə, dəyiş",
+            "dəyiş",
+            "bəli, dəyiş",
+        }
+
+        no_answers = {
+            "xeyr",
+            "yox",
+            "xeyr, dəyişmə",
+            "dəyişmə",
+        }
+
+        if normalized in yes_answers:
+            new_name = self.profile.pending_name
+            self.profile.name = new_name
+            self.profile.pending_name = None
+
+            display_name = self._display_name_without_dir(new_name)
+
+            return (
+                f"Oldu. Bundan sonra səni {display_name} "
+                f"kimi yadda saxlayacağam."
+            )
+
+        if normalized in no_answers:
+            old_name = self.profile.name
+            self.profile.pending_name = None
+
+            return (
+                f"Oldu, adını dəyişmirəm. "
+                f"Sənin adın {old_name} olaraq qalır."
+            )
+
+        # If the user says something unrelated, keep the pending change.
+        return None
 
     def _handle_local_memory(self, user_text: str) -> str | None:
         """Answer simple factual questions using structured memory."""

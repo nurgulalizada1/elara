@@ -10,3 +10,4 @@ class UserProfile:
     """Structured facts about the user."""
 
     name: str | None = None
+    pending_name: str | None = None
