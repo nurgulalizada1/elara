@@ -1,21 +1,21 @@
+"""ELARA-nın komanda sətri interfeysi."""
+
+from __future__ import annotations
+
 import typer
 
 from elara import __version__
-from elara.core.engine import ElaraEngine
 from elara.core.orchestrator import ElaraOrchestrator
 from elara.llm.mock import MockLLMProvider
 
-
-app = typer.Typer()
-engine = ElaraEngine()
-
-chat_orchestrator = ElaraOrchestrator(
-    provider=MockLLMProvider()
+app = typer.Typer(
+    help="ELARA — şəxsi AI sistemi.",
+    no_args_is_help=True,
 )
 
 
 def build_greeting(ad: str | None = None) -> str:
-    """Build the standard ELARA greeting."""
+    """Standart ELARA salamlamasını qurur."""
 
     if ad:
         return f"Salam, {ad}! Mən ELARA."
@@ -23,21 +23,26 @@ def build_greeting(ad: str | None = None) -> str:
     return "Salam! Mən ELARA."
 
 
+def build_orchestrator() -> ElaraOrchestrator:
+    """Chat üçün orchestrator yaradır."""
+
+    return ElaraOrchestrator(
+        provider=MockLLMProvider()
+    )
+
+
 @app.command()
-def salam(ad: str = typer.Option(None, "--ad")) -> None:
+def salam(
+    ad: str | None = typer.Option(
+        None,
+        "--ad",
+        "-a",
+        help="Sənin adın.",
+    ),
+) -> None:
     """ELARA ilə salamlaş."""
 
-    command = "salam"
-
-    if ad:
-        command = f"salam {ad}"
-
-    result = engine.run(command)
-
-    if result.success:
-        typer.echo(build_greeting(ad))
-    else:
-        typer.echo(result.message)
+    typer.echo(build_greeting(ad))
 
 
 @app.command()
@@ -51,14 +56,21 @@ def version() -> None:
 def chat() -> None:
     """ELARA ilə interaktiv söhbət et."""
 
+    orchestrator = build_orchestrator()
+
     typer.echo("ELARA chat başladı. Çıxmaq üçün 'exit' yaz.")
 
     while True:
-        user_text = typer.prompt("Sən")
+        try:
+            user_text = typer.prompt("Sən")
+        except (EOFError, KeyboardInterrupt):
+            typer.echo("\nELARA chat bağlandı.")
+            break
 
-        if user_text.strip().lower() == "exit":
+        if user_text.strip().lower() in {"exit", "quit", "çıx"}:
             typer.echo("ELARA chat bağlandı.")
             break
 
-        response = chat_orchestrator.handle(user_text)
+        response = orchestrator.handle(user_text)
+
         typer.echo(f"ELARA: {response}")

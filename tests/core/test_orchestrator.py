@@ -60,3 +60,31 @@ def test_orchestrator_remembers_user_name():
     response = orchestrator.handle("Mənim adım nədir?")
 
     assert response == "Sənin adın Nurguldur."
+def test_orchestrator_stores_name_in_profile():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Mənim adım Nurguldur")
+
+    assert orchestrator.profile.name == "Nurguldur"
+
+
+def test_orchestrator_uses_profile_for_name_question():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Mənim adım Nurguldur")
+
+    response = orchestrator.handle("Mən kiməm?")
+
+    assert response == "Sənin adın Nurguldur."
+
+
+def test_orchestrator_updates_name():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Mənim adım Nurguldur")
+    orchestrator.handle("Mənim adım Aylindir")
+
+    assert orchestrator.profile.name == "Aylindir"
