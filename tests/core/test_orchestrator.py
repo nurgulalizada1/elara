@@ -18,3 +18,45 @@ def test_orchestrator_rejects_empty_message():
     response = orchestrator.handle("")
 
     assert response == "Mesaj boş ola bilməz."
+def test_orchestrator_keeps_conversation_memory():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Salam")
+    orchestrator.handle("Mənim adım Nurguldur")
+
+    messages = orchestrator.memory.get_messages()
+
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "Salam"
+
+    assert messages[1]["role"] == "assistant"
+    assert messages[2]["role"] == "user"
+    assert messages[2]["content"] == "Mənim adım Nurguldur"
+def test_orchestrator_sends_memory_to_provider():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Salam")
+    orchestrator.handle("Mənim adım Nurguldur")
+
+    messages = orchestrator.memory.get_messages()
+
+    assert messages[0] == {
+        "role": "user",
+        "content": "Salam",
+    }
+
+    assert messages[2] == {
+        "role": "user",
+        "content": "Mənim adım Nurguldur",
+    }
+def test_orchestrator_remembers_user_name():
+    provider = MockLLMProvider()
+    orchestrator = ElaraOrchestrator(provider)
+
+    orchestrator.handle("Mənim adım Nurguldur")
+
+    response = orchestrator.handle("Mənim adım nədir?")
+
+    assert response == "Sənin adın Nurguldur."
