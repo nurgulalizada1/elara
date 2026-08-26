@@ -7,6 +7,8 @@ import typer
 from elara import __version__
 from elara.core.orchestrator import ElaraOrchestrator
 from elara.llm.mock import MockLLMProvider
+from elara.memory.persistent import PersistentMemory
+
 
 app = typer.Typer(
     help="ELARA — şəxsi AI sistemi.",
@@ -24,10 +26,11 @@ def build_greeting(ad: str | None = None) -> str:
 
 
 def build_orchestrator() -> ElaraOrchestrator:
-    """Chat üçün orchestrator yaradır."""
+    """Chat üçün persistent orchestrator yaradır."""
 
     return ElaraOrchestrator(
-        provider=MockLLMProvider()
+        provider=MockLLMProvider(),
+        persistent_memory=PersistentMemory(),
     )
 
 
