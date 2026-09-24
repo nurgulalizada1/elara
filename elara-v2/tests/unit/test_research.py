@@ -148,6 +148,13 @@ class TestSynthesis:
         syn = await Synthesizer(None).synthesize("q", res, "en")
         assert "found no results" in syn.text and not syn.used_llm
 
+    async def test_all_sources_down_is_not_reported_as_no_results(self, settings):
+        import httpx as _h
+        engine = make_engine(settings, overrides={"": _h.ConnectError("blocked")})
+        res = await engine.research("single-cell RNA sequencing")
+        syn = await Synthesizer(None).synthesize("q", res, "en")
+        assert "couldn't reach any research source" in syn.text and "no results" not in syn.text
+
     async def test_fallback_without_llm_lists_sources(self, settings):
         res = await make_engine(settings).research("single-cell RNA sequencing")
         syn = await Synthesizer(LLMService(None, settings)).synthesize("q", res, "az")

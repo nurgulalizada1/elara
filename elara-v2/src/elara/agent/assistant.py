@@ -134,6 +134,9 @@ class Assistant:
             except DatabaseError as e:
                 log.exception("assistant.db_error")
                 return self._reply(turn, t("db_error", lang, error=str(e)), persist=False)
+            except Exception as e:  # never crash the interface; never pretend success
+                log.exception("assistant.internal_error")
+                return self._reply(turn, t("internal_error", lang, error=type(e).__name__))
             state["language"] = lang
             return self._reply(turn, reply_text)
 

@@ -172,3 +172,11 @@ async def test_input_validation(app):
     assert "too long" in r.text or "çox uzundur" in r.text
     r = await app.assistant.handle("   \x00  ")
     assert r.text in ("Nəsə yazmaq istədin?", "Did you want to say something?")
+
+
+async def test_unexpected_bug_is_reported_not_crashing(app, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("bug")
+    monkeypatch.setattr(app.research, "research", boom)
+    r = await app.assistant.handle("Find recent papers about CRISPR")
+    assert "RuntimeError" in r.text and "not completed" in r.text

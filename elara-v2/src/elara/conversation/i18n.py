@@ -71,6 +71,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "az": "“{query}” üzrə heç bir mənbədə nəticə tapmadım.",
         "en": "I found no results for “{query}” in any source.",
         "tr": "“{query}” için hiçbir kaynakta sonuç bulamadım."},
+    "research_all_failed": {
+        "az": "Heç bir elmi mənbəyə qoşula bilmədim ({sources}). Şəbəkə bağlantısını yoxla; "
+              "nəticə uydurmayacağam.",
+        "en": "I couldn't reach any research source ({sources}). Check the network connection; "
+              "I won't make results up.",
+        "tr": "Hiçbir araştırma kaynağına ulaşamadım ({sources}). Ağ bağlantısını kontrol et; "
+              "sonuç uydurmayacağım."},
     "research_header": {"az": "“{query}” üzrə tapdıqlarım:",
                         "en": "Here's what I found for “{query}”:",
                         "tr": "“{query}” için bulduklarım:"},
@@ -100,6 +107,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "memory_found": {"az": "Yaddaşımda belə qeyd var: {content}",
                      "en": "From what you told me: {content}",
                      "tr": "Kayıtlarıma göre: {content}"},
+    "internal_error": {"az": "Daxili xəta baş verdi ({error}); əməliyyat tamamlanmadı. "
+                            "Təfərrüatlar jurnaldadır.",
+                       "en": "Something went wrong internally ({error}); the request was not "
+                             "completed. Details are in the log.",
+                       "tr": "Dahili bir hata oluştu ({error}); istek tamamlanmadı. Ayrıntılar "
+                             "günlükte."},
     "db_error": {"az": "Yerli verilənlər bazasında xəta baş verdi: {error}",
                  "en": "A local database error occurred: {error}",
                  "tr": "Yerel veritabanında hata oluştu: {error}"},

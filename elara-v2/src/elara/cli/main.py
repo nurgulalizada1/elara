@@ -17,7 +17,7 @@ def _settings() -> Settings:
     return Settings()
 
 
-def _setup_logging(settings: Settings, *, console_level: str = "WARNING") -> None:
+def _setup_logging(settings: Settings, *, console_level: str = "ERROR") -> None:
     configure_logging(settings.log_level, json_format=False, log_file=settings.log_path,
                       console=True, console_level=console_level,
                       secrets=settings.secret_values())
@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Configuration error: {e}", file=sys.stderr)
         return 2
     if command != "serve":
-        _setup_logging(settings, console_level="INFO" if args.verbose else "WARNING")
+        _setup_logging(settings, console_level="INFO" if args.verbose else "ERROR")
     return COMMANDS[command](args, settings)
 
 

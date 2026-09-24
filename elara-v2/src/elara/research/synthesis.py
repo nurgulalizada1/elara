@@ -66,6 +66,9 @@ class Synthesizer:
         self.llm = llm
 
     async def synthesize(self, question: str, result: ResearchResult, language: str) -> Synthesis:
+        if not result.records and result.outcomes and not any(o.ok for o in result.outcomes):
+            return Synthesis(text=t("research_all_failed", language,
+                                    sources=", ".join(result.failed_sources)), used_llm=False)
         if not result.records:
             text = t("research_none", language, query=result.plan.original)
             if result.failed_sources:

@@ -42,7 +42,7 @@ async def run_checks(settings: Settings, *, online: bool = True,
     pdf = importlib.util.find_spec("pypdf") is not None
     checks.append(Check("PDF support", "ok" if pdf else "warn",
                         "pypdf installed" if pdf else "pypdf not installed",
-                        "pip install -e '.[pdf]'"))
+                        "pip install pypdf  (or: pip install -e '.[pdf]' from the source tree)"))
 
     checks.append(Check("Configuration", "ok", f"data dir {settings.data_dir}, language "
                                                f"{settings.default_language}"))
