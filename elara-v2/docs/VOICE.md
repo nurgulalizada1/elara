@@ -83,7 +83,7 @@ next turn (`--turns 2`).
 | `MIN_SPEECH_MS` | `250` | shorter bursts are treated as noise |
 | `CALIBRATION_MS` | `250` | non-speech audio needed before the adaptive floor is used; until then speech starts on `VAD_MIN_RMS` alone |
 | `VAD_RATIO` / `VAD_STOP_RATIO` | `3.0` / `2.0` | speech starts above floor×3, continues above floor×2 (hysteresis) |
-| `VAD_MIN_RMS` | `300` | absolute minimum start level, AC RMS (~ −41 dBFS), for very quiet rooms |
+| `VAD_MIN_RMS` | `200` | absolute minimum start level, AC RMS (~ −44 dBFS), for very quiet rooms; tuned on the target laptop mic |
 | `SPEECH_START_MS` | `90` | consecutive loud audio needed to start (ignores clicks) |
 | `VAD_SMOOTHING_MS` | `90` | moving average used for end-of-speech decisions |
 | `TTS_ENABLED`, `TTS_VOICE`, `TTS_RATE_WPM` | `true`, `en-us`, `170` | spoken answers |
@@ -96,7 +96,7 @@ next turn (`--turns 2`).
 - **Endpointing is energy-based.** Levels are AC RMS per 30 ms frame (the frame mean is
   subtracted), so a microphone DC offset is ignored; it is reported as `dc_offset_dbfs`.
   The noise floor is the 15th percentile of non-speech frames over the last 1.2 s, so
-  speaking immediately is fine. A loud, steady room (above ~ −41 dBFS) at the very start can
+  speaking immediately is fine. A loud, steady room (above ~ −44 dBFS) at the very start can
   be taken for speech until a 1.2 s window has been seen; noise that changes sharply
   mid-utterance can still misjudge the end; the 12 s cap applies. `elara voice --json`
   shows the floor, thresholds and DC offset under `capture`. Silero VAD is a later option.

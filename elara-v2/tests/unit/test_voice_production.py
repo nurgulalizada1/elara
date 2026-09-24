@@ -81,6 +81,14 @@ def test_config_defaults_and_english_only(monkeypatch):
         VoiceConfig()
 
 
+def test_default_vad_min_rms_is_200_and_overridable(monkeypatch):
+    """Tuned on the real laptop mic (validated with ELARA_VOICE_VAD_MIN_RMS=200)."""
+    assert VoiceConfig().vad_min_rms == 200.0
+    assert rms_dbfs(VoiceConfig().vad_min_rms) == pytest.approx(-44.3, abs=0.1)
+    monkeypatch.setenv("ELARA_VOICE_VAD_MIN_RMS", "300")
+    assert VoiceConfig().vad_min_rms == 300.0
+
+
 # --------------------------------------------------------------------- microphone ----
 _rng = __import__("random").Random(1234)
 
@@ -200,7 +208,7 @@ def test_laptop_dc_offset_quiet_room_normal_speech_ends_on_speech():
     assert u.speech_ms >= 1400 and u.trailing_silence_ms >= 800 // FRAME_MS * FRAME_MS
     assert u.dc_offset_dbfs == pytest.approx(-12.5, abs=0.3)   # reported ...
     assert u.noise_floor_dbfs < -50                            # ... but not used as noise
-    assert u.start_threshold_dbfs == pytest.approx(rms_dbfs(300), abs=0.1)
+    assert u.start_threshold_dbfs == pytest.approx(rms_dbfs(200), abs=0.1)
     assert u.stop_threshold_dbfs < u.start_threshold_dbfs
 
 
@@ -237,7 +245,7 @@ def test_quiet_room_floor_and_thresholds():
     u = m.listen()
     assert u.reason == "end_of_speech"
     assert -58 < u.noise_floor_dbfs < -52                 # 60 counts ~ -54.7 dBFS
-    assert u.start_threshold_dbfs == pytest.approx(rms_dbfs(300), abs=0.1)  # min_rms guard
+    assert u.start_threshold_dbfs == pytest.approx(rms_dbfs(200), abs=0.1)  # min_rms guard
     quiet = mic(room(60, 2), start_timeout_s=0.5)[0].listen()
     assert quiet.reason == "no_speech" and quiet.dc_offset_dbfs < -60  # no offset here
 
