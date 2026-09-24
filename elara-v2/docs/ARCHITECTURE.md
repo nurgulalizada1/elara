@@ -94,6 +94,35 @@ questions ("How do I install Python?") are not answered from memory.
   ki…", "hatırla ki…", "save to memory: …"), through the API/CLI, or by the model's
   `memory_store` tool under the provenance rules in SECURITY.md.
 
+## Core API (the frontend boundary)
+
+`elara.core.service` is the one interface frontends use:
+
+```python
+from elara.core.service import CoreRequest, CoreResult, ElaraCore
+
+async with ElaraCore.open(settings) as core:          # builds all services once
+    result: CoreResult = await core.process(
+        CoreRequest(text="...", conversation_id=None, request_id=None, channel="cli"))
+    await core.confirm(action_id, approve=True, channel="cli")   # pending actions
+    core.container                                    # management views (memory, tools…)
+```
+
+`CoreResult` contains every `AssistantReply` field:
+- `text`, `conversation_id`, `request_id`, `language`, `intent`
+- `tier`, `resolver`, `used_llm`
+- `tool_calls`, `memory_events`, `pending_action`, `sources`
+
+It adds `channel`, `duration_ms` and `build` (version, commit, code path).
+
+`ElaraCore` is a thin facade over `build_container()` and `Assistant`. Routing, memory, tools,
+research and security live below it and are unchanged. Frontends are adapters:
+- **CLI:** `elara ask` and the chat REPL call `core.process` (channel `cli`). `memory`, `tools`
+  and `research` are management commands that use services from the same core.
+- **HTTP API:** `/chat` and `/confirmations` call `core.process` / `core.confirm` (channel `api`).
+- **Future voice, desktop and mobile frontends:** construct or reach an `ElaraCore` and send
+  `CoreRequest`s; no business logic belongs in a frontend.
+
 ## Clients (desktop, mobile, voice)
 
 Everything a client needs goes through the HTTP API: `/chat`, `/confirmations`, `/memory`,

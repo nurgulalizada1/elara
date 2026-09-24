@@ -1,4 +1,9 @@
-"""`elara` command-line entry point."""
+"""`elara` command-line entry point.
+
+An adapter only: it turns arguments into ElaraCore calls and prints the results.
+Conversational requests go through `ElaraCore.process`; management commands (memory,
+tools, research) use the same core's services. No business logic lives here.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +14,7 @@ import json
 import sys
 
 from elara.config.settings import Settings
-from elara.core.buildinfo import build_info, build_label
+from elara.core.buildinfo import build_label
 from elara.core.logging import configure_logging
 
 
@@ -23,35 +28,34 @@ def _setup_logging(settings: Settings, *, console_level: str = "ERROR") -> None:
                       secrets=settings.secret_values())
 
 
-async def _with_container(settings: Settings, fn):
-    from elara.core.container import build_container
-    c = build_container(settings)
-    try:
-        return await fn(c)
-    finally:
-        await c.aclose()
+async def _with_core(settings: Settings, fn):
+    from elara.core.service import ElaraCore
+    async with ElaraCore.open(settings) as core:
+        return await fn(core)
 
 
 def cmd_chat(args, settings: Settings) -> int:
     from elara.cli.repl import Repl
 
-    async def go(c):
-        await Repl(c).run()
-    asyncio.run(_with_container(settings, go))
+    async def go(core):
+        await Repl(core).run()
+    asyncio.run(_with_core(settings, go))
     return 0
 
 
 def cmd_ask(args, settings: Settings) -> int:
-    async def go(c):
-        reply = await c.assistant.handle(" ".join(args.message), args.conversation)
+    from elara.core.service import CoreRequest
+
+    async def go(core):
+        result = await core.process(CoreRequest(text=" ".join(args.message),
+                                                conversation_id=args.conversation,
+                                                channel="cli"))
         if args.json:
-            payload = reply.model_dump(mode="json")
-            payload["build"] = build_info()
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
         else:
-            print(reply.text)
+            print(result.text)
         return 0
-    return asyncio.run(_with_container(settings, go))
+    return asyncio.run(_with_core(settings, go))
 
 
 def cmd_doctor(args, settings: Settings) -> int:
@@ -103,7 +107,7 @@ def cmd_memory(args, settings: Settings) -> int:
             print("deleted" if ok else "not found")
             return 0 if ok else 1
         return 0
-    return asyncio.run(_with_container(settings, go))
+    return asyncio.run(_with_core(settings, lambda core: go(core.container)))
 
 
 def cmd_tools(args, settings: Settings) -> int:
@@ -129,7 +133,7 @@ def cmd_tools(args, settings: Settings) -> int:
         print(json.dumps({"status": outcome.status.value, "output": outcome.output,
                           "error": outcome.error}, indent=2, ensure_ascii=False))
         return 0 if outcome.ok else 1
-    return asyncio.run(_with_container(settings, go))
+    return asyncio.run(_with_core(settings, lambda core: go(core.container)))
 
 
 def cmd_research(args, settings: Settings) -> int:
@@ -139,7 +143,7 @@ def cmd_research(args, settings: Settings) -> int:
                                                        args.language)
         print(syn.text)
         return 0
-    return asyncio.run(_with_container(settings, go))
+    return asyncio.run(_with_core(settings, lambda core: go(core.container)))
 
 
 def build_parser() -> argparse.ArgumentParser:

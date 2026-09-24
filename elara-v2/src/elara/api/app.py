@@ -9,7 +9,6 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import elara
-from elara.agent.assistant import AssistantReply
 from elara.api.schemas import (
     ChatRequest,
     ConfirmRequest,
@@ -28,6 +27,7 @@ from elara.core.container import Container, build_container
 from elara.core.context import new_id, request_scope
 from elara.core.errors import DatabaseError, ElaraError, PermissionDenied, ProviderError
 from elara.core.logging import get_logger
+from elara.core.service import CoreRequest, CoreResult, ElaraCore
 from elara.memory import MemoryKind, MemorySource
 from elara.security.untrusted import Trust
 from elara.tools.base import Origin, ToolContext
@@ -83,22 +83,26 @@ def _mem(m) -> MemoryOut:
 
 def create_app(settings: Settings | None = None, container: Container | None = None) -> FastAPI:
     settings = settings or (container.settings if container else get_settings())
-    state: dict[str, Container] = {}
+    state: dict[str, ElaraCore] = {}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        state["c"] = container or build_container(settings)
+        core = ElaraCore(container or build_container(settings),
+                         owns_container=container is None)
+        state["core"] = core
         yield
-        if container is None:
-            await state["c"].aclose()
+        await core.close()
 
     app = FastAPI(title="ELARA", version=elara.__version__, lifespan=lifespan,
                   responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse},
                              500: {"model": ErrorResponse}})
     app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_request_bytes)
 
+    def core() -> ElaraCore:
+        return state["core"]
+
     def c() -> Container:
-        return state["c"]
+        return state["core"].container
 
     def auth(request: Request) -> None:
         token = settings.api_token.get_secret_value() if settings.api_token else None
@@ -165,13 +169,15 @@ def create_app(settings: Settings | None = None, container: Container | None = N
 
     deps = [Depends(auth)]
 
-    @app.post("/chat", response_model=AssistantReply, dependencies=deps)
+    @app.post("/chat", response_model=CoreResult, dependencies=deps)
     async def chat(body: ChatRequest):
-        return await c().assistant.handle(body.message, body.conversation_id)
+        return await core().process(CoreRequest(text=body.message,
+                                                conversation_id=body.conversation_id,
+                                                channel="api"))
 
-    @app.post("/confirmations/{action_id}", response_model=AssistantReply, dependencies=deps)
+    @app.post("/confirmations/{action_id}", response_model=CoreResult, dependencies=deps)
     async def confirm(action_id: str, body: ConfirmRequest):
-        return await c().assistant.confirm(action_id, body.approve)
+        return await core().confirm(action_id, body.approve, channel="api")
 
     @app.get("/conversations", dependencies=deps)
     async def conversations(limit: int = 20):

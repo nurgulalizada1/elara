@@ -6,6 +6,7 @@ from elara.cli import main as cli
 from elara.cli.doctor import Check, render, run_checks
 from elara.cli.repl import Repl
 from elara.core.container import build_container
+from elara.core.service import ElaraCore
 
 
 @pytest.fixture
@@ -47,7 +48,7 @@ def test_serve_refuses_public_bind_without_token(env):
 
 async def test_repl_commands(settings, capsys, monkeypatch):
     c = build_container(settings, use_env_provider=False)
-    repl = Repl(c, color=False)
+    repl = Repl(ElaraCore(c), color=False)
     await repl.say("Remember that I like jazz")
     await repl.command("/memory")
     await repl.command("/status")

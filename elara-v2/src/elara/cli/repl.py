@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from elara.agent.assistant import AssistantReply
-from elara.core.container import Container
+from elara.core.service import CoreRequest, CoreResult, ElaraCore
 
 HELP = """\
 Commands:
@@ -23,8 +22,9 @@ DIM, BOLD, YELLOW, RESET = "\033[2m", "\033[1m", "\033[33m", "\033[0m"
 
 
 class Repl:
-    def __init__(self, container: Container, color: bool | None = None):
-        self.c = container
+    def __init__(self, core: ElaraCore, color: bool | None = None):
+        self.core = core
+        self.c = core.container  # management views (/memory, /tools, /status, /clear)
         self.cid: str | None = None
         self.color = sys.stdout.isatty() if color is None else color
 
@@ -48,8 +48,9 @@ class Repl:
                 continue
             await self.say(line)
 
-    async def say(self, text: str) -> AssistantReply:
-        reply = await self.c.assistant.handle(text, self.cid)
+    async def say(self, text: str) -> CoreResult:
+        reply = await self.core.process(CoreRequest(text=text, conversation_id=self.cid,
+                                                    channel="cli"))
         self.cid = reply.conversation_id
         self._p(f"ELARA: {reply.text}", BOLD)
         if reply.memory_events:
