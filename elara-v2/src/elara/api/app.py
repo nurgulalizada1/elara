@@ -23,6 +23,7 @@ from elara.api.schemas import (
     ToolRunRequest,
 )
 from elara.config.settings import Settings, get_settings
+from elara.core.buildinfo import build_info
 from elara.core.container import Container, build_container
 from elara.core.context import new_id, request_scope
 from elara.core.errors import DatabaseError, ElaraError, PermissionDenied, ProviderError
@@ -157,6 +158,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         except DatabaseError:
             db_ok = False
         return {"status": "ok" if db_ok else "degraded", "version": elara.__version__,
+                "build": build_info(),
                 "database": db_ok, "schema_version": cont.db.schema_version() if db_ok else None,
                 "llm_provider": cont.settings.resolved_provider(),
                 "llm_available": cont.llm.available, "tools": len(cont.registry)}

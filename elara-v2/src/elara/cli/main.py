@@ -8,8 +8,8 @@ import ipaddress
 import json
 import sys
 
-from elara import __version__
 from elara.config.settings import Settings
+from elara.core.buildinfo import build_info, build_label
 from elara.core.logging import configure_logging
 
 
@@ -45,7 +45,9 @@ def cmd_ask(args, settings: Settings) -> int:
     async def go(c):
         reply = await c.assistant.handle(" ".join(args.message), args.conversation)
         if args.json:
-            print(reply.model_dump_json(indent=2))
+            payload = reply.model_dump(mode="json")
+            payload["build"] = build_info()
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             print(reply.text)
         return 0
@@ -142,7 +144,7 @@ def cmd_research(args, settings: Settings) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="elara", description="ELARA personal AI assistant")
-    p.add_argument("--version", action="version", version=f"elara {__version__}")
+    p.add_argument("--version", action="version", version=build_label())
     p.add_argument("-v", "--verbose", action="store_true", help="show info logs on stderr")
     sub = p.add_subparsers(dest="command")
     sub.add_parser("chat", help="interactive chat (default)")

@@ -10,7 +10,7 @@ from typing import Any
 from elara.core.errors import ToolError
 from elara.memory.answer import is_personal_question
 from elara.memory.policy import CommandType, MemoryPolicy
-from elara.research.planner import RSID, VARIANT_ID
+from elara.research.planner import RSID, VARIANT_ID, requested_sources
 from elara.tools.builtin.calculator import evaluate
 
 F = re.I
@@ -70,6 +70,8 @@ _RESEARCH_WORDS = re.compile(
     r"tədqiqat\w*|məqalə\w*|araşdırma\w*|elmi|makale\w*|yayın\w*|çalışma\w*)\b", F)
 _SEARCH_VERBS = re.compile(r"\b(find|search|look up|lookup|show|get|list|latest|recent|what does "
                            r"the literature|tap|axtar|göstər|son|bul|ara|getir|listele)\w*", F)
+_LOOKUP_WORDS = re.compile(r"\b(entry|entries|record|records|results?|hits|papers?|articles?|"
+                           r"lookup|look up|query|pmids?|ids?|qeyd|nəticə\w*|kayıt|sonuç\w*)\b", F)
 _FILE_LIST = [
     re.compile(r"^(?:list|show)(?: me)?(?: the)? files(?: in| inside| under)?\s*(?P<p>.*?)[?.!]*$",
                F),
@@ -177,6 +179,10 @@ class IntentClassifier:
     @staticmethod
     def _is_research(t: str) -> bool:
         if RSID.search(t) or VARIANT_ID.search(t):
+            return True
+        # A named research source (PubMed, NCBI Gene, ClinVar, ...) plus any lookup wording is
+        # always research: it must reach that source's client, never the LLM.
+        if requested_sources(t) and (_SEARCH_VERBS.search(t) or _LOOKUP_WORDS.search(t)):
             return True
         return bool(_RESEARCH_WORDS.search(t) and _SEARCH_VERBS.search(t))
 

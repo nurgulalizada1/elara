@@ -6,11 +6,20 @@ Send me that file (plus `server.log` from section 8 if requested).
 ## 0. Setup
 
 ```bash
-git clone --branch claude/elegant-gates-fv73ei ~/Downloads/elara.bundle ~/elara-validate-src
-cd ~/elara-validate-src/elara-v2
-git log --oneline -1
+# Get the latest code from GitHub (or update an existing clone), then install it EDITABLE.
+[ -d ~/elara-validate-src/.git ] || git clone --branch claude/elegant-gates-fv73ei \
+    https://github.com/nurgulalizada1/elara.git ~/elara-validate-src
+cd ~/elara-validate-src
+git remote set-url origin https://github.com/nurgulalizada1/elara.git
+git fetch origin claude/elegant-gates-fv73ei && git checkout -q claude/elegant-gates-fv73ei
+git reset --hard origin/claude/elegant-gates-fv73ei
+cd elara-v2 && git log --oneline -1
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -q -e ".[pdf,dev]"
+hash -r
+# Must print version 0.2.0 or later, the same commit as `git log` above, and a code path
+# inside ~/elara-validate-src. If not, a different/older `elara` is on your PATH.
+which elara && elara --version
 
 export V=~/elara-validation
 rm -rf "$V" && mkdir -p "$V/ws" "$V/data" "$V/web"

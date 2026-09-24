@@ -44,8 +44,12 @@ async def run_checks(settings: Settings, *, online: bool = True,
                         "pypdf installed" if pdf else "pypdf not installed",
                         "pip install pypdf  (or: pip install -e '.[pdf]' from the source tree)"))
 
+    from elara.core.buildinfo import build_label
+    checks.append(Check("Code", "ok", build_label()))
+    named = ", ".join(f"{k}={v}" for k, v in settings.named_paths.items()) or "none"
     checks.append(Check("Configuration", "ok", f"data dir {settings.data_dir}, language "
-                                               f"{settings.default_language}"))
+                                               f"{settings.default_language}, named paths: "
+                                               f"{named}"))
     container = None
     try:
         from elara.core.container import build_container
