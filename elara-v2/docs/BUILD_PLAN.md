@@ -8,15 +8,15 @@ Each phase ends with: tests green → architecture review → docs updated.
 | # | Phase | Deliverables | Status |
 |---|-------|--------------|--------|
 | 1 | Foundation | pyproject, settings (env/.env, SecretStr), JSON logging + redaction, SQLite + versioned migrations, audit tables, language detection | done |
-| 2 | Conversation engine | message/context model, conversation store, provider abstraction (Anthropic, OpenAI over httpx), retry/backoff, usage tracking, streaming, structured output | done |
-| 3 | Agent core | deterministic intent classifier, tiered router, tool registry, executor with permissions/confirmations, LLM tool loop | done |
-| 4 | Memory | SQLite+FTS5 store, decision policy, extraction (az/en/tr), correction/supersede, deletion, inspection, provenance | done |
-| 5 | Tools | calculator, time, files (list/read/write/search/info/delete), open_path, run_python (sandboxed subprocess, off by default), web_fetch (SSRF-guarded) | done |
-| 6 | Research | source abstraction, PubMed, Europe PMC, Crossref, Semantic Scholar, ClinVar, NCBI Gene, Ensembl, gnomAD; dedupe/validate/rank; citation-safe synthesis | done |
-| 7 | Security hardening | untrusted-content envelopes, injection detector, taint tracking, path jail, output validation | done |
-| 8 | Voice | VAD / wake-word / STT / TTS interfaces, energy VAD, transcript quality gate, espeak-ng TTS, faster-whisper adapter | done (interfaces + adapters; no mic capture loop yet) |
-| 9 | API | FastAPI app: health, chat, memory, tools, config, research, confirmations; bearer auth, size limits | done |
-| 10 | Integration + doctor | end-to-end tests, `elara doctor`, docs | done |
+| 2 | Conversation engine | message/context model, conversation store, provider abstraction (Anthropic, OpenAI over httpx), retry/backoff, usage tracking, streaming, structured output | planned |
+| 3 | Agent core | deterministic intent classifier, tiered router, tool registry, executor with permissions/confirmations, LLM tool loop | planned |
+| 4 | Memory | SQLite+FTS5 store, decision policy, extraction (az/en/tr), correction/supersede, deletion, inspection, provenance | planned |
+| 5 | Tools | calculator, time, files (list/read/write/search/info/delete), open_path, run_python (sandboxed subprocess, off by default), web_fetch (SSRF-guarded) | planned |
+| 6 | Research | source abstraction, PubMed, Europe PMC, Crossref, Semantic Scholar, ClinVar, NCBI Gene, Ensembl, gnomAD; dedupe/validate/rank; citation-safe synthesis | planned |
+| 7 | Security hardening | untrusted-content envelopes, injection detector, taint tracking, path jail, output validation | planned |
+| 8 | Voice | VAD / wake-word / STT / TTS interfaces, energy VAD, transcript quality gate, espeak-ng TTS, faster-whisper adapter | planned |
+| 9 | API | FastAPI app: health, chat, memory, tools, config, research, confirmations; bearer auth, size limits | planned |
+| 10 | Integration + doctor | end-to-end tests, `elara doctor`, docs | planned |
 
 ## Future work (not built yet)
 - Microphone capture loop + wake-word model for "Hey ELARA" (needs a trained model).
