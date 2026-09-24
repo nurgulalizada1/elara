@@ -37,6 +37,9 @@ class MemoryCommand:
 
 
 _STORE = [
+    re.compile(r"^(?:please\s+)?(?:save|store|add)(?:\s+(?:this|that))?\s+(?:to|in|into)\s+"
+               r"(?:your\s+|long[- ]term\s+)?memory\s*[:,]?\s+(?P<c>.+)$", F),
+    re.compile(r"^(?:please\s+)?(?:save|store) (?:this|that)\s*:\s*(?P<c>.+)$", F),
     re.compile(r"^(?:please\s+|pls\s+)?(?:remember|don'?t forget|do not forget|keep in mind|"
                r"note)(?:\s+that)?\s*[:,]?\s+(?P<c>.+)$", F),
     re.compile(r"^(?:xahiş edirəm\s+)?(?:yadda saxla|yadında saxla|unutma|qeyd et)"
@@ -78,7 +81,8 @@ _NAME = [
 _MY_X_IS_Y = re.compile(r"^my\s+(?P<k>[\w\- ]{2,50}?)\s+(?:is|are)\s+(?P<v>.{1,200}?)[.!]?$", F)
 _PREFERENCE = re.compile(
     r"\b(i (?:really )?(?:prefer|like|love|hate|dislike|don'?t like|enjoy|want you to)|"
-    r"my fav(?:ou)?rite|üstünlük verirəm|xoşlayıram|xoşuma gəlir|sevirəm|sevmirəm|"
+    r"my fav(?:ou)?rite|my (?:\w+\s+){0,3}preferences?|"
+    r"üstünlük verirəm|xoşlayıram|xoşuma gəlir|sevirəm|sevmirəm|"
     r"sevimli|istəyirəm ki|tercih ederim|severim|seviyorum|sevmem|favori|en sevdiğim)\b", F)
 _TEMPORAL = {
     "tomorrow": 2, "today": 1, "tonight": 1, "this week": 8, "next week": 15, "this weekend": 5,

@@ -28,5 +28,13 @@ Priority for better voices: Azerbaijani first, then English, then Turkish.
 espeak-ng sounds robotic, but it is the only fully offline engine with Azerbaijani out of the box.
 Neural engines (e.g. Piper, or cloud TTS) can be added as `TTS_PROVIDERS` entries.
 
-Next steps: a `sounddevice` capture/playback loop, a trained "hey elara" openWakeWord model,
-and an `elara voice` command.
+Privacy rule: wake-word detection runs locally, and `VoicePipeline` ignores all audio until the
+wake word fires (tested). Microphone audio is never streamed to an LLM or any remote API.
+Only the transcript of the utterance after the wake word reaches `Assistant.handle`, and that
+follows the normal local-first routing.
+
+Next steps:
+- a `sounddevice` capture/playback loop
+- a trained "hey elara" openWakeWord model
+- an `elara voice` command
+- a desktop (Tauri) shell that runs this loop next to `elara serve`

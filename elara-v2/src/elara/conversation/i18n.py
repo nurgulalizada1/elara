@@ -78,6 +78,53 @@ MESSAGES: dict[str, dict[str, str]] = {
               "I won't make results up.",
         "tr": "Hiçbir araştırma kaynağına ulaşamadım ({sources}). Ağ bağlantısını kontrol et; "
               "sonuç uydurmayacağım."},
+    "research_source_header": {
+        "az": "{source} nəticələri: “{query}” (mənbənin öz sıralaması ilə){cached}:",
+        "en": "{source} results for “{query}” (in {source}'s own ranking){cached}:",
+        "tr": "“{query}” için {source} sonuçları ({source} sıralamasıyla){cached}:"},
+    "research_source_empty": {
+        "az": "{source} “{query}” üzrə heç bir nəticə qaytarmadı.",
+        "en": "{source} returned no results for “{query}”.",
+        "tr": "{source}, “{query}” için sonuç döndürmedi."},
+    "research_source_unavailable": {
+        "az": "{source} hazırda əlçatan deyil ({reason}): {error}. Canlı nəticə əldə olunmadı "
+              "və başqa mənbənin nəticələrini {source} kimi təqdim etmirəm.",
+        "en": "{source} is unavailable right now ({reason}): {error}. No live result was "
+              "retrieved, and I am not presenting other sources' results as {source}.",
+        "tr": "{source} şu an erişilemiyor ({reason}): {error}. Canlı sonuç alınamadı ve başka "
+              "kaynakların sonuçlarını {source} olarak sunmuyorum."},
+    "research_fallback_header": {
+        "az": "Başqa mənbələrdən canlı nəticələr ({sources}) — bunlar {requested} DEYİL:",
+        "en": "Live results from other sources ({sources}) — these are NOT from {requested}:",
+        "tr": "Diğer kaynaklardan canlı sonuçlar ({sources}) — bunlar {requested} DEĞİL:"},
+    "cached_note": {"az": " — keşdən", "en": " — from local cache", "tr": " — önbellekten"},
+    "reason_unreachable": {"az": "şəbəkə bağlantısı yoxdur və ya bloklanıb",
+                           "en": "network unreachable or blocked",
+                           "tr": "ağa ulaşılamıyor veya engellendi"},
+    "reason_rate_limited": {"az": "sorğu limiti aşılıb", "en": "rate limited",
+                            "tr": "istek sınırı aşıldı"},
+    "reason_timeout": {"az": "vaxt bitdi", "en": "timed out", "tr": "zaman aşımı"},
+    "reason_blocked": {"az": "giriş rədd edildi", "en": "access denied",
+                       "tr": "erişim reddedildi"},
+    "reason_other": {"az": "xəta", "en": "error", "tr": "hata"},
+    "abstract_label": {"az": "Xülasə", "en": "Abstract", "tr": "Özet"},
+    "abstract_missing": {"az": "Mənbə xülasə təqdim etmir.",
+                         "en": "The source provides no abstract.",
+                         "tr": "Kaynak özet sağlamıyor."},
+    "context_found": {"az": "Bu söhbətdə əvvəl dedin: “{content}”",
+                      "en": "Earlier in this conversation you said: “{content}”",
+                      "tr": "Bu konuşmada daha önce şunu söyledin: “{content}”"},
+    "help": {
+        "az": "Edə bildiklərim: hesablama, saat/tarix, “yadda saxla ki …” ilə yaddaş, "
+              "faylları göstərmək/oxumaq/yaratmaq, elmi axtarış (PubMed, Europe PMC, ClinVar, "
+              "NCBI Gene, Ensembl, gnomAD …) və dil modeli qoşulubsa ümumi söhbət.",
+        "en": "I can: calculate, tell the time/date, remember things (“remember that …”), "
+              "list/read/create files in your workspace, search scientific sources (PubMed, "
+              "Europe PMC, ClinVar, NCBI Gene, Ensembl, gnomAD …), and chat generally when a "
+              "language model is configured.",
+        "tr": "Yapabildiklerim: hesaplama, saat/tarih, hafıza (“hatırla ki …”), çalışma "
+              "alanındaki dosyaları listeleme/okuma/oluşturma, bilimsel arama (PubMed, Europe "
+              "PMC, ClinVar, NCBI Gene, Ensembl, gnomAD …) ve dil modeli varsa genel sohbet."},
     "research_header": {"az": "“{query}” üzrə tapdıqlarım:",
                         "en": "Here's what I found for “{query}”:",
                         "tr": "“{query}” için bulduklarım:"},

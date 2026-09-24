@@ -14,7 +14,8 @@ from elara.agent.intent import Intent
 
 DETERMINISTIC = {Intent.GREETING, Intent.HOW_ARE_YOU, Intent.THANKS, Intent.GOODBYE,
                  Intent.CALCULATION, Intent.TIME, Intent.MEMORY_STORE, Intent.MEMORY_FORGET,
-                 Intent.MEMORY_LIST, Intent.MEMORY_QUERY, Intent.FILE_LIST, Intent.OPEN_PATH}
+                 Intent.MEMORY_LIST, Intent.MEMORY_QUERY, Intent.FILE_LIST, Intent.FILE_READ,
+                 Intent.OPEN_PATH, Intent.HELP}
 _COMPLEX = re.compile(
     r"\b(explain in detail|in depth|step[- ]by[- ]step|analy[sz]e|analysis|compare|contrast|"
     r"trade-?offs?|design|architecture|plan|strategy|prove|derive|debug|refactor|write (a |the )?"

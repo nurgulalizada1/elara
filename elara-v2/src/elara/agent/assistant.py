@@ -1,8 +1,12 @@
 """Assistant: the single conversational entry point used by the CLI and the API.
 
 handle(text) -> validate -> language -> pending confirmation? -> intent -> route ->
-{deterministic handler | research workflow | LLM tool loop} -> implicit memory ->
-persist -> reply.
+{deterministic handler | research workflow | LLM tool loop} -> persist -> reply.
+
+Local-first: before a request reaches an LLM, ELARA tries deterministic handlers,
+long-term memory, the current conversation's own statements, local tools and research
+APIs (see docs/ARCHITECTURE.md, "Resolution order"). Ordinary statements are never
+promoted to long-term memory; only explicit "remember/save" requests are.
 """
 
 from __future__ import annotations
@@ -26,12 +30,14 @@ from elara.core.errors import DatabaseError, ProviderError
 from elara.core.language import detect_language
 from elara.core.logging import get_logger
 from elara.memory import MemoryService, MemorySource
+from elara.memory.answer import LocalAnswerer
 from elara.providers.base import ChatMessage
 from elara.providers.service import LLMService
 from elara.research.engine import ResearchEngine
 from elara.research.models import Record
-from elara.research.synthesis import Synthesizer
+from elara.research.synthesis import Synthesizer, source_listing
 from elara.security.input import clean_user_text
+from elara.security.paths import normalize_location_name
 from elara.security.untrusted import Trust, wrap_untrusted
 from elara.tools.base import Origin, ToolContext
 from elara.tools.builtin.calculator import evaluate, format_number, normalize_expression
@@ -40,6 +46,11 @@ from elara.tools.executor import Status, ToolExecutor, ToolOutcome
 
 log = get_logger(__name__)
 _PATH_IN_TEXT = re.compile(r"(~?/[^\s,;\"'“”]+)")
+# Follow-ups about an earlier result that need actual reasoning (else answered locally).
+_NEEDS_REASONING = re.compile(
+    r"\b(why|how|explain|summari[sz]e|compare|contrast|critique|evaluate|implications?|"
+    r"is it|does it|are they|can you explain|what does .* mean|should i|niyə|necə|izah|"
+    r"xülasə|müqayisə|təhlil|neden|nasıl|açıkla|özetle|karşılaştır|değerlendir)\b", re.I)
 
 
 class ToolCallInfo(BaseModel):
@@ -67,6 +78,9 @@ class AssistantReply(BaseModel):
     memory_events: list[str] = Field(default_factory=list)
     pending_action: PendingInfo | None = None
     sources: list[dict[str, Any]] = Field(default_factory=list)
+    # Which resolver produced the answer: deterministic | memory | conversation | tool |
+    # research | llm | error. Lets clients (and tests) verify token-free handling.
+    resolver: str = "deterministic"
 
 
 class _Turn:
@@ -82,6 +96,7 @@ class _Turn:
         self.pending: PendingAction | None = None
         self.sources: list[dict] = []
         self.user_message_id: int | None = None
+        self.resolver = "deterministic"
 
     def record(self, outcome: ToolOutcome) -> None:
         self.tool_calls.append(ToolCallInfo(tool=outcome.tool, status=outcome.status.value,
@@ -105,6 +120,7 @@ class Assistant:
         self.classifier = classifier
         self.router = router
         self.loop = loop
+        self.local_answerer = LocalAnswerer()
 
     # ------------------------------------------------------------------ entry point --
     async def handle(self, text: str, conversation_id: str | None = None,
@@ -163,7 +179,6 @@ class Assistant:
             return await self._research(turn, result.slots["query"])
         if result.intent == Intent.REFERENCE:
             return await self._reference(turn, text, result.slots["index"], route)
-        self._implicit_memory(turn, text)
         return await self._llm(turn, text, route)
 
     # --------------------------------------------------------------- confirmations --
@@ -227,14 +242,18 @@ class Assistant:
                 return t("memory_list_header", lang) + "\n" + "\n".join(
                     f"  #{m.id} [{m.kind}] {m.content}" for m in items)
             case Intent.MEMORY_QUERY:
-                hits = self.memory.relevant(r.slots["query"], limit=3)
-                if hits:
-                    return t("memory_found", lang, content=hits[0].content)
+                answer = self._answer_locally(turn, r.slots["query"])
+                if answer is not None:
+                    return answer
                 if self.llm.available:
                     return None  # let the model answer (it may be general knowledge)
                 return t("memory_not_found", lang)
+            case Intent.HELP:
+                return t("help", lang)
             case Intent.FILE_LIST:
                 return await self._run_tool(turn, "list_files", {"path": r.slots["path"]})
+            case Intent.FILE_READ:
+                return await self._run_tool(turn, "read_file", {"path": r.slots["path"]})
             case Intent.OPEN_PATH:
                 target = self._resolve_named_path(r.slots["target"])
                 if target is None:
@@ -244,7 +263,27 @@ class Assistant:
                 return await self._run_tool(turn, "open_path", {"path": target})
         return None
 
+    def _answer_locally(self, turn: _Turn, question: str) -> str | None:
+        """Answer a question about the user from memory, then from this conversation."""
+        candidates = {m.id: m for m in [*self.memory.relevant(question, limit=10),
+                                        *self.memory.profile()]}
+        hit = self.local_answerer.from_memories(question, candidates.values(),
+                                                self.memory.store.by_key("name"))
+        if hit is not None:
+            turn.resolver = "memory"
+            return t("memory_found", turn.lang, content=hit.content)
+        statements = [m.content for m in self.conversations.recent_messages(
+            turn.cid, limit=self.settings.context_max_messages + 1)
+            if m.role == "user" and m.id != turn.user_message_id
+            and not m.content.rstrip().endswith("?")]
+        hit = self.local_answerer.from_statements(question, statements)
+        if hit is not None:
+            turn.resolver = "conversation"
+            return t("context_found", turn.lang, content=hit.content)
+        return None
+
     async def _run_tool(self, turn: _Turn, name: str, args: dict) -> str:
+        turn.resolver = "tool"
         outcome = await self.executor.execute(name, args, ToolContext(
             origin=Origin.USER, conversation_id=turn.cid, language=turn.lang,
             origin_message_id=turn.user_message_id))
@@ -255,9 +294,7 @@ class Assistant:
         return outcome_text(outcome, turn.lang)
 
     def _resolve_named_path(self, target: str) -> str | None:
-        key = target.lower().strip()
-        for suffix in (" folder", " directory", " qovluğu", " qovluğum", " klasörü", " klasörüm"):
-            key = key.removesuffix(suffix)
+        key = normalize_location_name(target)
         if key in self.settings.named_paths:
             return str(self.settings.named_paths[key])
         if target.startswith(("/", "~", ".")):
@@ -298,26 +335,31 @@ class Assistant:
             return t("memory_ambiguous", turn.lang, items=items)
         return t("memory_not_found", turn.lang)
 
-    def _implicit_memory(self, turn: _Turn, text: str) -> None:
-        cand = self.memory.policy.evaluate_statement(text)
-        if cand is None:
-            return
-        out = self.memory.remember(text, source=MemorySource.USER_STATEMENT, trust=Trust.USER,
-                                   conversation_id=turn.cid,
-                                   origin_message_id=turn.user_message_id)
-        if out.saved and out.result and out.result.action != "duplicate":
-            turn.memory_events.append(f"{out.result.action}:#{out.result.memory.id}")
-
     # ------------------------------------------------------------------- research ----
     async def _research(self, turn: _Turn, query: str) -> str:
-        result = await self.research.research(query, language=turn.lang)
-        synthesis = await self.synthesizer.synthesize(query, result, turn.lang)
-        turn.used_llm = synthesis.used_llm
-        turn.sources = [_ref(r) for r in result.records]
-        if result.records:
+        turn.resolver = "research"
+        plan = await self.research.planner.plan(query, turn.lang)
+        result = await self.research.run(plan)
+        if plan.explicit_sources:
+            # The user named the source(s): list them as returned, no LLM rewriting.
+            fallback = None
+            if not any(o.ok for o in result.outcomes):
+                others = [n for n in self.research.planner.SOURCES[plan.intent]
+                          if n not in plan.sources]
+                if others:
+                    fallback = await self.research.run(plan.model_copy(update={
+                        "sources": others, "explicit_sources": False, "supplementary": []}))
+            text = source_listing(result, turn.lang, fallback)
+            shown = result.records or (fallback.records if fallback else [])
+        else:
+            synthesis = await self.synthesizer.synthesize(query, result, turn.lang)
+            turn.used_llm = synthesis.used_llm
+            text, shown = synthesis.text, result.records
+        turn.sources = [_ref(r) for r in shown]
+        if shown:
             turn.state["references"] = turn.sources
             turn.state["focus"] = 1
-        return synthesis.text
+        return text
 
     async def _reference(self, turn: _Turn, text: str, index: int, route: Route) -> str:
         refs: list[dict] = turn.state.get("references") or []
@@ -329,9 +371,14 @@ class Assistant:
             return t("reference_unresolved", turn.lang)
         ref = refs[index - 1]
         turn.state["focus"] = index
-        detail = (f"[{index}] {ref['citation']}\nAbstract/summary: "
-                  f"{ref.get('abstract') or 'not available'}")
-        if not self.llm.available:
+        abstract = ref.get("abstract")
+        detail = "\n".join(x for x in (
+            f"[{index}] {ref['citation']}", ref.get("url") or "",
+            (f"{t('abstract_label', turn.lang)}: {abstract}" if abstract
+             else t("abstract_missing", turn.lang))) if x)
+        if not self.llm.available or not _NEEDS_REASONING.search(text):
+            # "tell me more / show / details": the stored record answers it; no LLM needed.
+            turn.tier, turn.resolver = Tier.DETERMINISTIC, "conversation"
             return detail
         wrapped = wrap_untrusted(detail, f"earlier result #{index}")
         prompt = (f"{text}\n\n(The user is referring to earlier result #{index}; its stored "
@@ -342,6 +389,7 @@ class Assistant:
     async def _llm(self, turn: _Turn, text: str, route: Route, *,
                    override_user_text: str | None = None, tainted: bool = False) -> str:
         if not self.llm.available:
+            turn.resolver = "unavailable"
             return t("llm_unavailable", turn.lang, error="no provider configured")
         system = build_system_prompt(
             language=turn.lang, profile=self.memory.profile(),
@@ -353,8 +401,10 @@ class Assistant:
                                          language=turn.lang, conversation_id=turn.cid,
                                          model_tier=route.model_tier, tainted=tainted)
         except ProviderError as e:
+            turn.resolver = "unavailable"
             return t("llm_unavailable", turn.lang, error=str(e))
         turn.used_llm = True
+        turn.resolver = "llm"
         for o in result.outcomes:
             turn.record(o)
         if result.pending:
@@ -387,7 +437,7 @@ class Assistant:
                               language=turn.lang, intent=turn.intent.value, tier=int(turn.tier),
                               used_llm=turn.used_llm, tool_calls=turn.tool_calls,
                               memory_events=turn.memory_events, pending_action=pending,
-                              sources=turn.sources)
+                              sources=turn.sources, resolver=turn.resolver)
 
 
 def _ref(r: Record) -> dict[str, Any]:

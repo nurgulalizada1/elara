@@ -72,11 +72,17 @@ class Settings(BaseSettings):
     max_file_read_bytes: int = 1_000_000
 
     # --- research ---
-    ncbi_api_key: SecretStr | None = None
-    semantic_scholar_api_key: SecretStr | None = None
+    ncbi_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("ELARA_NCBI_API_KEY", "NCBI_API_KEY"))
+    semantic_scholar_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("ELARA_SEMANTIC_SCHOLAR_API_KEY",
+                                                    "SEMANTIC_SCHOLAR_API_KEY", "S2_API_KEY"))
     contact_email: str | None = None
     research_timeout_s: float = 20.0
     research_max_results: int = 5
+    # Supplementary literature sources (Semantic Scholar, Crossref) are only queried when
+    # PubMed + Europe PMC together return fewer records than this.
+    research_min_primary_results: int = 3
     http_cache_ttl_s: int = 6 * 3600
 
     # --- api ---
@@ -163,6 +169,8 @@ class Settings(BaseSettings):
             "write_dirs": [str(p) for p in self.write_dirs],
             "named_paths": {k: str(v) for k, v in self.named_paths.items()},
             "enable_code_execution": self.enable_code_execution,
+            "ncbi_key_set": bool(self.ncbi_api_key),
+            "semantic_scholar_key_set": bool(self.semantic_scholar_api_key),
             "disabled_tools": self.disabled_tools,
             "api": {"host": self.api_host, "port": self.api_port,
                     "auth_required": bool(self.api_token)},

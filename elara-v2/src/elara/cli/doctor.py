@@ -109,7 +109,12 @@ async def _research_checks(container) -> list[Check]:
                                          headers={"user-agent": "ELARA-doctor"})
             if r.status_code < 400:
                 return Check(f"{source.name} API", "ok", f"HTTP {r.status_code}")
-            hint = "rate limited — add an API key" if r.status_code == 429 else ""
+            hint = ""
+            if r.status_code == 429 and source.name == "semantic_scholar":
+                hint = ("rate limited — set ELARA_SEMANTIC_SCHOLAR_API_KEY; research only calls "
+                        "Semantic Scholar when PubMed/Europe PMC return too few results")
+            elif r.status_code == 429:
+                hint = "rate limited — try later or configure an API key for this source"
             return Check(f"{source.name} API", "warn", f"HTTP {r.status_code}", hint)
         except httpx.HTTPError as e:
             return Check(f"{source.name} API", "warn", f"unreachable ({type(e).__name__})",

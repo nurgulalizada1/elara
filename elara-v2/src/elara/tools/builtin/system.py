@@ -12,7 +12,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field
 
 from elara.core.errors import ToolError
-from elara.security.paths import PathGuard
+from elara.security.paths import PathGuard, normalize_location_name
 from elara.security.untrusted import Trust
 from elara.tools.base import Permission, Tool, ToolContext
 
@@ -44,11 +44,8 @@ class OpenPathTool(Tool):
         self.opener = opener
 
     def _target(self, raw: str):
-        key = raw.strip().lower()
-        for suffix in (" folder", " directory", " qovluğu", " qovluq", " klasörü"):
-            key = key.removesuffix(suffix)
-        raw = str(self.named.get(key, raw))
-        return self.guard.resolve(raw, "read")
+        named = self.named.get(normalize_location_name(raw)) or self.guard.named(raw)
+        return self.guard.resolve(str(named) if named else raw, "read")
 
     def permission_for(self, args: OpenInput) -> Permission:
         try:

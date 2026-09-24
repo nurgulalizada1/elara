@@ -20,6 +20,36 @@ question → QueryPlanner (intent, identifiers, recency, English keywords)
 Non-English questions are rewritten into English keywords by the fast model when one is
 available; otherwise filler words are stripped deterministically.
 
+## Explicitly named sources
+
+"Search PubMed for BRCA1 breast cancer and give me the first 3 results" is handled as a
+**direct query** of the named source(s):
+- only those APIs are called (`plan.explicit_sources`);
+- the source's own ranking and the requested count are kept;
+- the listing is produced by code (no LLM), with PMID/DOI only when the source returned them.
+
+If a named source fails, the reply says so with the failure kind:
+- network unreachable or blocked
+- access denied (401/403)
+- rate limited
+- timed out
+
+Live results from the intent's other sources may follow, but only under an explicit
+"these are NOT from <source>" header. Cached responses are labelled "from local cache".
+
+## Rate limits and optional keys
+
+| Source | Without key | With key |
+|--------|-------------|----------|
+| NCBI (PubMed, ClinVar, Gene) | 3 req/s | `ELARA_NCBI_API_KEY` (or `NCBI_API_KEY`): 10 req/s |
+| Semantic Scholar | 1 req/s, often 429 | `ELARA_SEMANTIC_SCHOLAR_API_KEY` (or `SEMANTIC_SCHOLAR_API_KEY` / `S2_API_KEY`) |
+
+A 429 whose `Retry-After` is 5 s or less is retried; a longer one fails immediately. After a
+429, the host is put on cooldown (`Retry-After`, default 60 s), and ELARA won't call it again
+until the cooldown ends. Semantic Scholar and Crossref are supplementary for literature
+searches: they are only called when PubMed and Europe PMC return fewer than
+`ELARA_RESEARCH_MIN_PRIMARY_RESULTS` (default 3) records.
+
 ## Evidence types
 
 Every record is labelled with an evidence type:

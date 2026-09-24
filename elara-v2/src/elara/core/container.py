@@ -98,9 +98,11 @@ def build_container(settings: Settings, *, provider: LLMProvider | None = None,
     sources = build_sources(rhttp, settings)
     research = ResearchEngine(sources, QueryPlanner(llm), db,
                               per_source_limit=settings.research_max_results,
-                              source_timeout_s=settings.research_timeout_s + 5)
+                              source_timeout_s=settings.research_timeout_s + 5,
+                              min_primary_results=settings.research_min_primary_results)
 
-    guard = PathGuard(settings.read_dirs, settings.write_dirs, deny_dirs=[settings.data_dir])
+    guard = PathGuard(settings.read_dirs, settings.write_dirs, deny_dirs=[settings.data_dir],
+                      named_paths=settings.named_paths)
     registry = ToolRegistry()
     tools = [
         CalculatorTool(), CurrentTimeTool(),

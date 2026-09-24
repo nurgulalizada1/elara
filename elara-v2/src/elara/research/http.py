@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import random
@@ -19,6 +20,8 @@ from elara.core.timeutil import iso, utcnow
 from elara.database.db import Database
 
 log = get_logger(__name__)
+_cache_flags: contextvars.ContextVar[list[bool] | None] = contextvars.ContextVar(
+    "research_cache_flags", default=None)
 RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
@@ -36,6 +39,7 @@ class ResearchHttp:
         self.min_intervals = min_intervals or {}
         self._last: dict[str, float] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._cooldown_until: dict[str, float] = {}
         ua = "ELARA/0.1 (personal research assistant)"
         self.user_agent = f"{ua}; mailto:{contact_email}" if contact_email else ua
 
@@ -79,13 +83,25 @@ class ResearchHttp:
                 await asyncio.sleep(wait)
             self._last[host] = time.monotonic()
 
+    def _cooling_down(self, host: str) -> float:
+        return max(0.0, self._cooldown_until.get(host, 0.0) - time.monotonic())
+
     async def _request(self, method: str, url: str, *, params=None, body=None, headers=None,
                        source: str) -> Any:
         key = self._cache_key(method, url, params, body)
         cached = self._cache_get(key)
+        flags = _cache_flags.get()
         if cached is not None:
+            if flags is not None:
+                flags.append(True)
             return cached
+        if flags is not None:
+            flags.append(False)
         host = urlsplit(url).hostname or ""
+        if (wait := self._cooling_down(host)) > 0:
+            # Respect a previous 429: don't hit the API again until its window has passed.
+            raise SourceError(f"{source}: rate limited; not retrying for another {wait:.0f}s",
+                              "rate_limited")
         hdrs = {"user-agent": self.user_agent, "accept": "application/json", **(headers or {})}
         attempt = 0
         while True:
@@ -94,11 +110,11 @@ class ResearchHttp:
                 resp = await self.client.request(method, url, params=params, json=body,
                                                  headers=hdrs, timeout=self.timeout_s)
             except httpx.TimeoutException as e:
-                err = SourceError(f"{source}: timed out")
+                err = SourceError(f"{source}: timed out", "timeout")
                 retry, delay = True, None
                 cause: Exception = e
             except httpx.TransportError as e:
-                err = SourceError(f"{source}: unreachable ({type(e).__name__})")
+                err = SourceError(f"{source}: unreachable ({type(e).__name__})", "unreachable")
                 retry, delay = True, None
                 cause = e
             else:
@@ -106,17 +122,39 @@ class ResearchHttp:
                     try:
                         data = resp.json()
                     except ValueError as e:
-                        raise SourceError(f"{source}: invalid JSON") from e
+                        raise SourceError(f"{source}: invalid JSON", "invalid_response") from e
                     self._cache_put(key, data)
                     return data
-                err = SourceError(f"{source}: HTTP {resp.status_code}")
-                retry = resp.status_code in RETRY_STATUS
+                status = resp.status_code
                 ra = resp.headers.get("retry-after", "")
                 delay = float(ra) if ra.replace(".", "", 1).isdigit() else None
+                if status == 429:
+                    err = SourceError(f"{source}: HTTP 429 (rate limited)", "rate_limited")
+                    # Long server-requested waits are not slept through: fail now, cool down.
+                    retry = delay is None or delay <= 5
+                elif status in (401, 403):
+                    err = SourceError(f"{source}: HTTP {status} (access blocked or key rejected)",
+                                      "blocked")
+                    retry = False
+                else:
+                    err = SourceError(f"{source}: HTTP {status}", "http_error")
+                    retry = status in RETRY_STATUS
                 cause = err
             if not retry or attempt >= self.max_retries:
-                log.warning("research.source_failed", extra={"source": source, "error": str(err)})
+                if err.kind == "rate_limited":
+                    self._cooldown_until[host] = time.monotonic() + min(max(delay or 60, 5), 3600)
+                log.warning("research.source_failed", extra={"source": source, "error": str(err),
+                                                             "kind": err.kind})
                 raise err from cause
             sleep = min(delay or self.backoff_s * (2 ** attempt) + random.uniform(0, 0.2), 5.0)
             await asyncio.sleep(sleep)
             attempt += 1
+
+
+def track_cache() -> contextvars.Token:
+    """Start recording (per asyncio task) whether responses came from the cache."""
+    return _cache_flags.set([])
+
+
+def cache_flags() -> list[bool]:
+    return list(_cache_flags.get() or [])

@@ -18,14 +18,10 @@ memories are retrieved by FTS relevance to the current message.
    - English: "remember (that) …", "don't forget …"
    - Azerbaijani: "yadda saxla (ki) …", "… yadda saxla", "unutma …"
    - Turkish: "hatırla (ki) …", "aklında tut …"
-2. **Implicit self-disclosure** (conservative):
-   - name statements ("my name is", "adım …")
-   - preferences ("I prefer", "sevirəm", "tercih ederim", "my favorite …")
-   - "my X is Y" facts
-   - dated personal events ("… tomorrow", "sabah … var")
-
-   These are saved with `source=user_statement` and confidence 0.8. The reply lists them
-   (`memory: created:#n`).
+2. **No implicit saving.** Ordinary statements ("My exam is tomorrow", "My name is …") stay
+   in the conversation's short-term context. They can answer follow-ups in that same
+   conversation, but they are **not** written to long-term memory. (`MemoryPolicy.evaluate_statement`
+   still classifies such statements; nothing persists them.)
 3. **Never saved**: questions ("What is PCR?"), chit-chat, requests, assistant output, and
    anything from tools, files, web or papers.
 
@@ -40,7 +36,7 @@ Validation rejects:
 | Operation | Chat | CLI | API |
 |-----------|------|-----|-----|
 | store | "remember that …" | `elara memory add …` | `POST /memory/store` |
-| retrieve | "what's my …?" / automatic context | `elara memory search …`, `/memory q` | `POST /memory/search` |
+| retrieve | "what's my …?", "what language do I prefer?", "mən nə ilə maraqlanıram?" (answered locally, no LLM) / automatic context | `elara memory search …`, `/memory q` | `POST /memory/search` |
 | inspect | "what do you know about me?" | `elara memory list`, `/memory` | `GET /memory` |
 | correct | restate a keyed fact ("remember my favorite language is Rust") → supersedes the old one | — | `PATCH /memory/{id}` |
 | delete | "forget …", "bunu unut" (most recent), ambiguous matches → asks for `/forget <id>` | `elara memory delete <id>`, `/forget <id>` | `DELETE /memory/{id}` |

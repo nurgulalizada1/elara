@@ -44,19 +44,68 @@ text ─► clean/validate ─► language detect ─► pending confirmation? �
  files, open
                                    │
                                    ▼
-            implicit-memory decision (user text only) ─► persist messages/state ─► reply
+                          persist messages/state ─► reply (with `resolver`)
 ```
 
-* **Tier 0** answers without any model call: greetings, arithmetic, time, memory
-  store/forget/list/query, file listing, opening named folders. If a Tier 0 handler can't answer
-  (for example, a memory query with no match), the request falls through to the LLM.
+## Resolution order (local-first, token-minimizing)
+
+The LLM is the fallback reasoning engine, not the default. Before a request reaches a model,
+the assistant tries, in order:
+
+| Step | Resolver | Examples | `resolver` |
+|------|----------|----------|------------|
+| A | deterministic handlers | greetings, arithmetic, time, help, memory store/forget/list | `deterministic` |
+| B | long-term memory | "What language do I prefer?" → the stored preference | `memory` |
+| C | current conversation | "What is my test name?" after saying it earlier in the same conversation | `conversation` |
+| D | local tools | list/read files, open a named folder | `tool` |
+| E | cached results | research HTTP cache (labelled "from local cache") | `research` |
+| F | research/API tools | "Search PubMed for …", "NCBI Gene entry for TP53", rsIDs | `research` |
+| — | LLM (fast, then strong) | open-ended chat, reasoning, synthesis of multi-source literature | `llm` |
+
+Every reply carries `tier`, `used_llm` and `resolver`, so clients and tests can verify that no
+tokens were spent. Personal questions (B/C) are only answered locally when a stored statement
+covers most of the question's content words. Otherwise they fall through, so unrelated
+questions ("How do I install Python?") are not answered from memory.
+
+* **Tier 0** covers steps A–D, plus follow-ups such as "tell me more about the second paper",
+  which are answered from the stored record. Follow-ups that need reasoning ("explain why…")
+  go to the LLM with the record as untrusted data.
 * **Tier 1/2** use `AgentLoop`. The model receives tool specs and may call tools. Every call
-  goes through `ToolExecutor`, which returns results as `tool_result` blocks. The loop stops at
-  `agent_max_steps`, or when an action needs confirmation.
-  Tier 2 is chosen for long, multi-step or "analyze/compare/design…" requests.
-* **Tier 3**: `ResearchEngine` queries the sources in parallel with per-source timeouts.
-  `Synthesizer` writes the answer with the strong model. Non-English queries are first rewritten
-  into English keywords by the fast model (Tier 1).
+  goes through `ToolExecutor`, and results come back as `tool_result` blocks. The loop stops
+  at `agent_max_steps` or when an action needs confirmation. Tier 2 is used for long,
+  multi-step or "analyze/compare/design…" requests.
+* **Tier 3** handles research. When the user names a source ("Search PubMed for…"):
+  - only that source is queried, and its own ranking and requested count are kept;
+  - identifiers are shown only when the source returned them;
+  - there is no LLM step;
+  - failures are reported with their kind (unreachable, blocked, rate-limited, timeout);
+  - results from other sources are shown only under an explicit "NOT from X" label.
+
+  Otherwise the primary sources (PubMed + Europe PMC for literature) run in parallel.
+  Semantic Scholar and Crossref run only when the primaries return fewer than
+  `ELARA_RESEARCH_MIN_PRIMARY_RESULTS` records. `Synthesizer` then writes a citation-checked
+  answer with the strong model.
+
+## Short-term context vs long-term memory
+
+* **Conversation context** (the messages of one conversation plus its working state) is used
+  for follow-ups and step C. It is never promoted to long-term memory automatically.
+* **Long-term memory** is written only on explicit requests ("remember that…", "yadda saxla
+  ki…", "hatırla ki…", "save to memory: …"), through the API/CLI, or by the model's
+  `memory_store` tool under the provenance rules in SECURITY.md.
+
+## Clients (desktop, mobile, voice)
+
+Everything a client needs goes through the HTTP API: `/chat`, `/confirmations`, `/memory`,
+`/tools`, `/research`. It is authenticated by a bearer token when bound beyond localhost.
+A future Tauri desktop app can bundle `elara serve` as a sidecar. Android/iOS clients talk to
+the same API. The API itself needs no changes for this; transport/pairing for remote devices
+is a later task.
+
+Voice runs on the device. `VoicePipeline` only transcribes after the local wake-word detector
+fires. Audio before the wake word is never transcribed or sent anywhere, and nothing streams
+to an LLM API. The pipeline's `respond` callback is `Assistant.handle`, so voice gets the same
+local-first routing (see VOICE.md).
 
 ## Key decisions
 

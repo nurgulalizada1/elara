@@ -43,4 +43,11 @@ class PathNotAllowed(PermissionDenied):
 
 
 class SourceError(ElaraError):
-    """An external data source (research API, web) failed."""
+    """An external data source (research API, web) failed.
+
+    ``kind``: unreachable | timeout | rate_limited | blocked | http_error | invalid_response.
+    """
+
+    def __init__(self, message: str, kind: str = "http_error"):
+        super().__init__(message)
+        self.kind = kind

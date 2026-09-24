@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 from elara.core.errors import ToolError
+from elara.memory.answer import is_personal_question
 from elara.memory.policy import CommandType, MemoryPolicy
 from elara.research.planner import RSID, VARIANT_ID
 from elara.tools.builtin.calculator import evaluate
@@ -28,6 +29,8 @@ class Intent(StrEnum):
     MEMORY_QUERY = "memory_query"
     RESEARCH = "research"
     FILE_LIST = "file_list"
+    FILE_READ = "file_read"
+    HELP = "help"
     OPEN_PATH = "open_path"
     REFERENCE = "reference"   # follow-up about an earlier result ("the second paper")
     GENERAL = "general"
@@ -62,7 +65,8 @@ _MATH = re.compile(r"^[\d\s.+\-*/×÷^()%,√]*(sqrt|log|ln|sin|cos|tan|exp|fact
                    r"[\d\s.+\-*/×÷^()%,√a-z]*$", F)
 _RESEARCH_WORDS = re.compile(
     r"\b(research|papers?|studies|study|literature|publications?|articles?|preprints?|"
-    r"reviews? on|pubmed|europe ?pmc|semantic scholar|crossref|clinvar|gnomad|ensembl|"
+    r"reviews? on|pubmed|europe ?pmc|semantic scholar|crossref|clinvar|gnomad|ensembl|ncbi|"
+    r"entrez|gene (?:entry|record|summary)|medline|"
     r"tədqiqat\w*|məqalə\w*|araşdırma\w*|elmi|makale\w*|yayın\w*|çalışma\w*)\b", F)
 _SEARCH_VERBS = re.compile(r"\b(find|search|look up|lookup|show|get|list|latest|recent|what does "
                            r"the literature|tap|axtar|göstər|son|bul|ara|getir|listele)\w*", F)
@@ -73,6 +77,16 @@ _FILE_LIST = [
                r"(?:faylları|dosyaları)\s+(?:göstər|sadala|listele|göster)[.!]*$", F),
     re.compile(r"^(?:faylları|dosyaları)\s+(?:göstər|listele|göster)[.!]*$", F),
 ]
+_FILE_READ = [
+    re.compile(r"^(?:please\s+)?(?:read|cat|display|show(?: me)?|print)\s+(?:the\s+)?(?:file\s+)?"
+               r"(?P<p>[~/][^\s]*|[^\s/]+/[^\s]+|[^\s]+\.[A-Za-z0-9]{1,8})"
+               r"(?:\s+(?:from|in)\s+(?:my\s+)?workspace)?"
+               r"(?:\s+(?:and\s+)?(?:tell me\s+)?what it says)?[.!?]*$", F),
+    re.compile(r"^(?P<p>[^\s]+\.[A-Za-z0-9]{1,8})\s+(?:faylını|dosyasını)\s+"
+               r"(?:oxu|göstər|oku|göster)[.!]*$", F),
+]
+_HELP = re.compile(r"^(help|/?help me|what can you do|what are you able to do|nə edə bilərsən|"
+                   r"nələr edə bilirsən|neler yapabilirsin|ne yapabilirsin)[?!.\s]*$", F)
 _OPEN = [
     re.compile(r"^open\s+(?:up\s+)?(?:my\s+|the\s+)?(?P<t>.+?)(?:\s+folder|\s+directory)?[.!]*$",
                F),
@@ -142,6 +156,11 @@ class IntentClassifier:
             return IntentResult(Intent.REFERENCE, {"index": ref})
         if self._is_research(body):
             return IntentResult(Intent.RESEARCH, {"query": body})
+        if _HELP.match(body):
+            return IntentResult(Intent.HELP)
+        for pat in _FILE_READ:
+            if m := pat.match(body):
+                return IntentResult(Intent.FILE_READ, {"path": m.group("p")})
         for pat in _FILE_LIST:
             if m := pat.match(body):
                 return IntentResult(Intent.FILE_LIST, {"path": (m.groupdict().get("p") or ".")
@@ -151,6 +170,8 @@ class IntentClassifier:
                 return IntentResult(Intent.OPEN_PATH, {"target": m.group("t").strip()})
         if q := self.memory_policy.detect_query(body):
             return IntentResult(Intent.MEMORY_QUERY, {"query": q})
+        if is_personal_question(body):
+            return IntentResult(Intent.MEMORY_QUERY, {"query": body})
         return IntentResult(Intent.GENERAL)
 
     @staticmethod

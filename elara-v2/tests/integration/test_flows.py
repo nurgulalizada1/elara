@@ -55,12 +55,17 @@ async def test_memory_store_and_retrieval_across_conversations(app, provider):
     assert r4.memory_events and app.memory.store.list() == []
 
 
-async def test_implicit_episodic_memory_and_questions_not_saved(app, provider):
-    provider.push(text("Good luck! Want a quick revision plan?"), text("PCR is ..."))
-    r = await app.assistant.handle("My exam is tomorrow")
-    assert r.memory_events and app.memory.store.list()[0].kind == "episodic"
-    await app.assistant.handle("What is PCR?")
-    assert len(app.memory.store.list()) == 1
+async def test_ordinary_statements_are_not_persisted(app, provider):
+    """Regression (validation #2): conversation context must not become long-term memory."""
+    provider.push(text("Good luck!"), text("Noted."), text("PCR is ..."), text("I don't know."))
+    for msg in ("My exam is tomorrow", "My temporary test name is ELARA_VALIDATION.",
+                "What is PCR?"):
+        r = await app.assistant.handle(msg)
+        assert r.memory_events == [], msg
+    assert app.memory.store.list() == []
+    # a brand-new conversation cannot see it
+    r = await app.assistant.handle("What is my temporary test name?")
+    assert "ELARA_VALIDATION" not in r.text
 
 
 async def test_research_flow_with_synthesis_and_followup(app, provider):
@@ -71,10 +76,14 @@ async def test_research_flow_with_synthesis_and_followup(app, provider):
     assert "[9]" not in r.text and "[1] " in r.text
     assert r.sources and r.sources[0]["title"]
     assert provider.requests[0].model == "strong-model"
-    # Follow-up reference resolution ("the second one")
-    provider.push(text("That preprint proposes a new clustering method."))
+    # "Tell me more about the second one" is answered from the stored record: no LLM.
     r2 = await app.assistant.handle("Tell me more about the second one", r.conversation_id)
-    assert r2.intent == "reference"
+    assert r2.intent == "reference" and not r2.used_llm and r2.tier == 0
+    assert r.sources[1]["title"] in r2.text and len(provider.requests) == 1
+    # A follow-up that needs reasoning goes to the model, with the record as untrusted data.
+    provider.push(text("It is a preprint, so not peer reviewed."))
+    r3 = await app.assistant.handle("Explain why the second paper matters", r.conversation_id)
+    assert r3.used_llm and r3.intent == "reference"
     user_msg = provider.requests[1].messages[-1].text
     assert "earlier result #2" in user_msg and "<untrusted_content" in user_msg
     assert r.sources[1]["title"] in user_msg
@@ -177,6 +186,6 @@ async def test_input_validation(app):
 async def test_unexpected_bug_is_reported_not_crashing(app, monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("bug")
-    monkeypatch.setattr(app.research, "research", boom)
+    monkeypatch.setattr(app.research, "run", boom)
     r = await app.assistant.handle("Find recent papers about CRISPR")
     assert "RuntimeError" in r.text and "not completed" in r.text

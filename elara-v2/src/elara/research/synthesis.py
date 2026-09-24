@@ -17,7 +17,7 @@ from elara.core.errors import ProviderError
 from elara.core.logging import get_logger
 from elara.providers.base import ChatMessage, CompletionRequest
 from elara.providers.service import LLMService
-from elara.research.models import ResearchResult
+from elara.research.models import Record, ResearchResult
 from elara.security.untrusted import SYSTEM_TRUST_POLICY, wrap_untrusted
 
 log = get_logger(__name__)
@@ -59,6 +59,74 @@ def validate_citations(text: str, n: int, known_ids: set[str]) -> tuple[str, lis
     text = _PMID.sub(lambda m: m.group(0) if m.group(1) in known_ids else (
         removed.append(m.group(0)) or "[unverified identifier removed]"), text)
     return re.sub(r"[ \t]{2,}", " ", text).strip(), removed
+
+
+SOURCE_LABELS = {"pubmed": "PubMed", "europepmc": "Europe PMC", "crossref": "Crossref",
+                 "semantic_scholar": "Semantic Scholar", "clinvar": "ClinVar",
+                 "ncbi_gene": "NCBI Gene", "ensembl": "Ensembl", "gnomad": "gnomAD"}
+
+
+def label(source: str) -> str:
+    return SOURCE_LABELS.get(source, source)
+
+
+def record_line(i: int, r: Record) -> str:
+    parts = [f"{i}. {r.title.rstrip('.')}."]
+    venue_year = ", ".join(str(x) for x in (r.venue, r.year) if x)
+    if venue_year:
+        parts.append(venue_year + ".")
+    ids = []
+    if r.pmid:
+        ids.append(f"PMID: {r.pmid}")
+    if r.doi:
+        ids.append(f"DOI: {r.doi}")
+    if r.evidence_type.value != "unknown":
+        ids.append(r.evidence_type.value.replace("_", " "))
+    if ids:
+        parts.append("[" + "; ".join(ids) + "]")
+    if url := r.best_url():
+        parts.append(url)
+    return " ".join(parts)
+
+
+def _reason(kind: str | None, language: str) -> str:
+    key = f"reason_{kind}" if kind in ("unreachable", "rate_limited", "timeout",
+                                       "blocked") else "reason_other"
+    return t(key, language)
+
+
+def source_listing(result: ResearchResult, language: str,
+                   fallback: ResearchResult | None = None) -> str:
+    """Deterministic, source-faithful listing for explicitly requested sources (no LLM).
+
+    Records keep the order the source returned; identifiers are shown only when the
+    source supplied them; failures are stated, and any fallback is labelled as such.
+    """
+    lines: list[str] = []
+    query = result.plan.query
+    by_source: dict[str, list[Record]] = {}
+    for r in result.records:
+        by_source.setdefault(r.source, []).append(r)
+    for o in result.outcomes:
+        name = label(o.source)
+        if not o.ok:
+            lines.append(t("research_source_unavailable", language, source=name,
+                           reason=_reason(o.error_kind, language), error=o.error or "?"))
+        elif not by_source.get(o.source):
+            lines.append(t("research_source_empty", language, source=name, query=query))
+        else:
+            cached = t("cached_note", language) if o.cached else ""
+            lines.append(t("research_source_header", language, source=name, query=query,
+                           cached=cached))
+            lines += [record_line(i, r) for i, r in enumerate(by_source[o.source], 1)]
+        lines.append("")
+    if fallback is not None and fallback.records:
+        requested = ", ".join(label(o.source) for o in result.outcomes)
+        used = ", ".join(sorted({label(r.source) for r in fallback.records}))
+        lines.append(t("research_fallback_header", language, sources=used, requested=requested))
+        lines += [record_line(i, r) + f" ({label(r.source)})"
+                  for i, r in enumerate(fallback.records, 1)]
+    return "\n".join(lines).strip()
 
 
 class Synthesizer:

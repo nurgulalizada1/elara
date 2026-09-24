@@ -11,6 +11,7 @@ from elara.core.errors import SourceError
 from elara.core.logging import get_logger
 from elara.core.timeutil import iso
 from elara.database.db import Database
+from elara.research.http import cache_flags, track_cache
 from elara.research.models import (
     EvidenceType,
     Record,
@@ -31,13 +32,15 @@ _EVIDENCE_RANK = {EvidenceType.DATABASE_RECORD: 0, EvidenceType.REVIEW: 1,
 class ResearchEngine:
     def __init__(self, sources: list[ResearchSource], planner: QueryPlanner,
                  db: Database | None = None, *, per_source_limit: int = 5,
-                 max_results: int = 8, source_timeout_s: float = 25.0):
+                 max_results: int = 8, source_timeout_s: float = 25.0,
+                 min_primary_results: int = 3):
         self.sources = {s.name: s for s in sources}
         self.planner = planner
         self.db = db
         self.per_source_limit = per_source_limit
         self.max_results = max_results
         self.source_timeout_s = source_timeout_s
+        self.min_primary_results = min_primary_results
 
     async def research(self, text: str, *, language: str = "en",
                        sources: list[str] | None = None) -> ResearchResult:
@@ -46,12 +49,25 @@ class ResearchEngine:
 
     async def run(self, plan: ResearchPlan) -> ResearchResult:
         t0 = time.perf_counter()
-        chosen = [self.sources[n] for n in plan.sources
-                  if n in self.sources and self.sources[n].applicable(plan)]
+        # Explicitly requested sources run even if the heuristic says "not applicable":
+        # the user asked for them, and an honest "no results" beats silent substitution.
+        chosen = [self.sources[n] for n in plan.sources if n in self.sources and (
+            plan.explicit_sources or self.sources[n].applicable(plan))]
         results = await asyncio.gather(*(self._one(s, plan) for s in chosen))
+        found = [r for _, recs in results for r in recs]
+        extra = [self.sources[n] for n in plan.supplementary
+                 if n in self.sources and self.sources[n].applicable(plan)]
+        if extra and len(self._merge([r.model_copy(deep=True) for r in found])) < \
+                self.min_primary_results:
+            results += await asyncio.gather(*(self._one(s, plan) for s in extra))
+            found = [r for _, recs in results for r in recs]
         outcomes = [o for o, _ in results]
-        records = self._merge([r for _, recs in results for r in recs])
-        records = self._rank(records, plan)[: self.max_results]
+        records = self._merge(found)
+        limit = min(plan.limit or self.max_results, 50)
+        if plan.explicit_sources and len(chosen) == 1:
+            records = records[:limit]  # keep the source's own ranking
+        else:
+            records = self._rank(records, plan)[:limit]
         result = ResearchResult(plan=plan, records=records, outcomes=outcomes)
         duration = int((time.perf_counter() - t0) * 1000)
         log.info("research.done", extra={"intent": plan.intent.value, "query": plan.query,
@@ -64,21 +80,29 @@ class ResearchEngine:
     async def _one(self, source: ResearchSource, plan: ResearchPlan
                    ) -> tuple[SourceOutcome, list[Record]]:
         t0 = time.perf_counter()
-        limit = self.per_source_limit if plan.intent == ResearchIntent.LITERATURE or \
-            source.name != "pubmed" else 3
+        if plan.limit and plan.explicit_sources:
+            limit = min(plan.limit, 50)
+        elif plan.intent == ResearchIntent.LITERATURE or source.name != "pubmed":
+            limit = self.per_source_limit
+        else:
+            limit = 3
+        track_cache()  # per-task context: gather() runs each source in its own task
         try:
             recs = await asyncio.wait_for(source.search(plan, limit), self.source_timeout_s)
             valid = [r for r in recs if self._valid(r)]
+            flags = cache_flags()
             return SourceOutcome(source=source.name, ok=True, count=len(valid),
+                                 cached=bool(flags) and all(flags),
                                  duration_ms=int((time.perf_counter() - t0) * 1000)), valid
         except TimeoutError:
-            err = "timed out"
+            err, kind = f"{source.name}: timed out", "timeout"
         except SourceError as e:
-            err = str(e)
+            err, kind = str(e), e.kind
         except Exception as e:  # a buggy/changed API must not break the whole search
             log.exception("research.source_crash", extra={"source": source.name})
-            err = f"unexpected response ({type(e).__name__})"
-        return SourceOutcome(source=source.name, ok=False, error=err,
+            err, kind = f"{source.name}: unexpected response ({type(e).__name__})", \
+                "invalid_response"
+        return SourceOutcome(source=source.name, ok=False, error=err, error_kind=kind,
                              duration_ms=int((time.perf_counter() - t0) * 1000)), []
 
     @staticmethod

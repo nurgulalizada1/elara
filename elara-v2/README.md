@@ -23,7 +23,7 @@ ELARA: …synthesis with [1]…[n] citations, generated only from records the AP
 | HTTP API (`elara serve`, FastAPI, optional bearer token) | ✓ |
 | LLM providers: Anthropic and OpenAI, over httpx: retries, streaming, structured output, token tracking | ✓ |
 | Tiered routing: deterministic, then fast model, then strong model, then the research workflow | ✓ |
-| Memory: explicit and implicit (conservative), corrections, deletion, expiry, FTS5 search, provenance | ✓ |
+| Memory: explicit only ("remember/save …"), answered locally without the LLM; corrections, deletion, expiry, FTS5 search, provenance | ✓ |
 | Tools (23): calculator, time, files (list/read incl. PDF/write/search/info/delete), open_path, run_python (off by default), web_fetch, memory tools, research tools | ✓ |
 | Research sources: PubMed, Europe PMC, Crossref, Semantic Scholar, ClinVar, NCBI Gene, Ensembl, gnomAD | ✓ (unit-tested on recorded response shapes; see *Live verification*) |
 | Security: untrusted-content envelopes, injection detection, taint-based permission escalation, path jail, SSRF guard, secret redaction | ✓ |

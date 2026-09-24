@@ -11,10 +11,11 @@ from tests import research_fixtures as fx
 from tests.fakes import ScriptedProvider, text
 
 
-def make_engine(settings, db=None, overrides=None, calls=None, llm=None):
+def make_engine(settings, db=None, overrides=None, calls=None, llm=None, min_primary=3):
     client = httpx.AsyncClient(transport=httpx.MockTransport(fx.handler(overrides, calls)))
     http = ResearchHttp(client, db, backoff_s=0, max_retries=1)
-    return ResearchEngine(build_sources(http, settings), QueryPlanner(llm), db)
+    return ResearchEngine(build_sources(http, settings), QueryPlanner(llm), db,
+                          min_primary_results=min_primary)
 
 
 class TestPlanner:
@@ -53,7 +54,7 @@ class TestPlanner:
 
 class TestEngine:
     async def test_literature_search_dedupes_and_labels(self, settings, db):
-        engine = make_engine(settings, db)
+        engine = make_engine(settings, db, min_primary=99)  # force supplementary sources
         res = await engine.research("single-cell RNA sequencing review")
         titles = [r.title for r in res.records]
         # The review appears in pubmed, europepmc and semantic scholar -> merged once.
@@ -87,7 +88,7 @@ class TestEngine:
     async def test_source_failure_is_isolated_and_reported(self, settings):
         engine = make_engine(settings, overrides={
             "semanticscholar": httpx.Response(429, json={"message": "Too Many Requests"}),
-            "crossref": httpx.ConnectError("down")})
+            "crossref": httpx.ConnectError("down")}, min_primary=99)
         res = await engine.research("single-cell RNA sequencing")
         assert set(res.failed_sources) == {"semantic_scholar", "crossref"}
         assert res.records  # other sources still delivered
@@ -172,3 +173,28 @@ async def test_research_tools(settings, db):
     assert clinvar.name == "clinvar_search" and not clinvar.exposed_to_llm
     out = await clinvar.run(clinvar.Input(query="BRCA1 c.68_69del"), ToolContext(origin=Origin.API))
     assert out.results[0].source == "clinvar"
+
+
+class TestExplicitSources:
+    @pytest.mark.parametrize("text,sources,query,limit", [
+        ("Search PubMed for BRCA1 breast cancer and give me the first 3 results with their "
+         "titles and PubMed IDs.", ["pubmed"], "BRCA1 breast cancer", 3),
+        ("Find the NCBI Gene entry for TP53.", ["ncbi_gene"], "TP53", None),
+        ("Search Europe PMC and Crossref for CRISPR base editing", ["europepmc", "crossref"],
+         "CRISPR base editing", None),
+        ("top 10 papers on Alzheimer amyloid in PubMed", ["pubmed"], "Alzheimer amyloid", 10),
+        ("PubMed-də CRISPR haqqında ilk 5 məqaləni tap", ["pubmed"], "CRISPR", 5),
+    ])
+    async def test_plan(self, text, sources, query, limit):
+        plan = await QueryPlanner().plan(text)
+        assert plan.explicit_sources and plan.sources == sources
+        assert plan.query == query and plan.limit == limit and plan.supplementary == []
+
+    async def test_default_literature_plan_is_tiered(self):
+        plan = await QueryPlanner().plan("Find recent papers about single-cell RNA sequencing.")
+        assert not plan.explicit_sources and plan.sources == ["pubmed", "europepmc"]
+        assert plan.supplementary == ["semantic_scholar", "crossref"]
+
+    def test_source_names_are_not_gene_symbols(self):
+        for word in ("NCBI", "PMID", "DOI", "EPMC"):
+            assert extract_identifiers(f"Find the {word} entry for TP53")["gene"] == "TP53"

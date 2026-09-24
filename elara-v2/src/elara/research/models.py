@@ -84,6 +84,9 @@ class SourceOutcome(BaseModel):
     ok: bool
     count: int = 0
     error: str | None = None
+    # unreachable | timeout | rate_limited | http_error | invalid_response
+    error_kind: str | None = None
+    cached: bool = False             # every response came from the local HTTP cache
     duration_ms: int = 0
 
 
@@ -95,6 +98,12 @@ class ResearchPlan(BaseModel):
     recent: bool = False
     min_year: int | None = None
     identifiers: dict[str, str] = Field(default_factory=dict)  # rsid, variant_id, gene
+    # Sources the user named explicitly ("search PubMed for ..."): only those are queried,
+    # their own ranking is preserved, and nothing else is substituted silently.
+    explicit_sources: bool = False
+    # Queried only if `sources` return too few results (saves calls / rate limit).
+    supplementary: list[str] = Field(default_factory=list)
+    limit: int | None = None        # "first 3 results"
 
 
 class ResearchResult(BaseModel):
