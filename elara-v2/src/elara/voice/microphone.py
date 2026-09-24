@@ -40,6 +40,7 @@ class Utterance:
     stop_threshold_dbfs: float | None = None
     speech_ms: int = 0
     trailing_silence_ms: int = 0
+    dc_offset_dbfs: float | None = None   # constant offset of the capture (ignored by the VAD)
 
 
 # A stream factory returns an object with start()/stop()/close() that calls
@@ -153,7 +154,7 @@ class Microphone:
             captured, reason = [], "no_speech"  # a click or bump, not speech
         pcm = b"".join(captured)
         overflows = getattr(stream, "overflow_counter", {}).get("n", 0)
-        floor = ep.noise_floor
+        floor, dc = ep.noise_floor, ep.dc_offset
         return Utterance(pcm=pcm, duration_s=round(len(pcm) / (SAMPLE_RATE * 2), 3),
                          capture_s=round(time.monotonic() - t0, 3), reason=reason,
                          overflows=overflows,
@@ -161,4 +162,5 @@ class Microphone:
                          start_threshold_dbfs=rms_dbfs(ep.start_threshold) if floor else None,
                          stop_threshold_dbfs=rms_dbfs(ep.stop_threshold) if floor else None,
                          speech_ms=speech_frames * FRAME_MS if pcm else 0,
-                         trailing_silence_ms=silence_frames * FRAME_MS if pcm else 0)
+                         trailing_silence_ms=silence_frames * FRAME_MS if pcm else 0,
+                         dc_offset_dbfs=rms_dbfs(abs(dc)) if dc is not None else None)

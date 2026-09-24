@@ -6,7 +6,7 @@ confirmations, security and LLM use all stay in the core.
 
 ```
 microphone (PipeWire/PortAudio, 16 kHz mono int16, in memory)
-  → energy VAD: one utterance, pre-roll, end on silence, hard cap
+  → energy VAD (DC-offset invariant): one utterance, pre-roll, end on silence, hard cap
   → faster-whisper small, CPU, int8, 8 threads, 1 worker, beam 5, language forced "en"
   → quality gate (deterministic; accepts "stop", "cancel", "what time is it")
   → ElaraCore.process(CoreRequest(text, channel="voice"))  → CoreResult
@@ -81,9 +81,9 @@ next turn (`--turns 2`).
 | `MAX_UTTERANCE_S` | `12` | hard cap per utterance |
 | `END_SILENCE_MS` | `800` | silence that ends an utterance |
 | `MIN_SPEECH_MS` | `250` | shorter bursts are treated as noise |
-| `CALIBRATION_MS` | `250` | room noise is measured first (keep quiet for a moment) |
+| `CALIBRATION_MS` | `250` | non-speech audio needed before the adaptive floor is used; until then speech starts on `VAD_MIN_RMS` alone |
 | `VAD_RATIO` / `VAD_STOP_RATIO` | `3.0` / `2.0` | speech starts above floor×3, continues above floor×2 (hysteresis) |
-| `VAD_MIN_RMS` | `300` | absolute minimum start level (~ −41 dBFS) for very quiet rooms |
+| `VAD_MIN_RMS` | `300` | absolute minimum start level, AC RMS (~ −41 dBFS), for very quiet rooms |
 | `SPEECH_START_MS` | `90` | consecutive loud audio needed to start (ignores clicks) |
 | `VAD_SMOOTHING_MS` | `90` | moving average used for end-of-speech decisions |
 | `TTS_ENABLED`, `TTS_VOICE`, `TTS_RATE_WPM` | `true`, `en-us`, `170` | spoken answers |
@@ -93,10 +93,13 @@ next turn (`--turns 2`).
 - **Azerbaijani voice input is not supported in production** (experimental, benchmark only).
 - **Spoken arithmetic goes to the LLM.** "17 times 42" (words) doesn't match the core's local
   calculator patterns; symbols (`17 * 42`) do.
-- **Endpointing is energy-based.** The room noise is calibrated in the first 250 ms. Speaking
-  instantly, or noise that changes sharply mid-utterance, can still misjudge the end; the
-  12 s cap applies. `elara voice --json` shows the measured floor and thresholds under
-  `capture`. Silero VAD is a later option.
+- **Endpointing is energy-based.** Levels are AC RMS per 30 ms frame (the frame mean is
+  subtracted), so a microphone DC offset is ignored; it is reported as `dc_offset_dbfs`.
+  The noise floor is the 15th percentile of non-speech frames over the last 1.2 s, so
+  speaking immediately is fine. A loud, steady room (above ~ −41 dBFS) at the very start can
+  be taken for speech until a 1.2 s window has been seen; noise that changes sharply
+  mid-utterance can still misjudge the end; the 12 s cap applies. `elara voice --json`
+  shows the floor, thresholds and DC offset under `capture`. Silero VAD is a later option.
 - **The espeak-ng voice is robotic**; `Speaker` is replaceable.
 - **Legacy `Settings` fields.** `ELARA_TTS_*` / `ELARA_STT_*` in the general settings belong to
   the older generic adapters; the voice channel uses `ELARA_VOICE_*` only.

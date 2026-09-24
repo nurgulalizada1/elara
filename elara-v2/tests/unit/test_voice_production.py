@@ -20,7 +20,7 @@ from elara.voice.quality import TranscriptQualityGate
 from elara.voice.session import VoiceSession
 from elara.voice.stt import FasterWhisperSTT, STTUnavailable
 from elara.voice.tts import EspeakSpeaker, TTSUnavailable
-from elara.voice.vad import SpeechEndpointer
+from elara.voice.vad import SpeechEndpointer, frame_levels, rms_dbfs
 from tests.fakes import ScriptedProvider, text
 
 np = pytest.importorskip("numpy")
@@ -161,6 +161,110 @@ def test_max_duration_remains_the_safety_cap():
     m, _ = mic(room(60, 0.5) + [voiced(6000, 60)] * 400, max_utterance_s=2.0)
     u = m.listen()
     assert u.reason == "max_duration" and 1.9 <= u.duration_s <= 2.4
+
+
+LAPTOP_DC = 7800  # int16 counts: the real laptop capture's constant offset (~ -12.5 dBFS)
+
+
+def with_dc(frames: list[bytes], offset: int) -> list[bytes]:
+    """Add a constant DC offset to every sample, like a biased laptop mic input."""
+    out = []
+    for f in frames:
+        a = array("h")
+        a.frombytes(f)
+        out.append(array("h", [max(-32768, min(32767, s + offset)) for s in a]).tobytes())
+    return out
+
+
+def test_frame_level_ignores_dc_offset():
+    quiet = noise(60)
+    biased = with_dc([quiet], LAPTOP_DC)[0]
+    a = array("h")
+    a.frombytes(biased)
+    raw_rms = math.sqrt(sum(s * s for s in a) / len(a))
+    assert rms_dbfs(raw_rms) == pytest.approx(-12.5, abs=0.2)  # what the old code measured
+    mean, ac = frame_levels(biased)
+    assert mean == pytest.approx(LAPTOP_DC, abs=10)
+    assert ac == pytest.approx(frame_levels(quiet)[1], rel=1e-6)  # only the real audio
+    assert rms_dbfs(ac) < -50
+    assert frame_levels(b"") == (0.0, 0.0)
+
+
+def test_laptop_dc_offset_quiet_room_normal_speech_ends_on_speech():
+    """Regression for the real laptop: DC ~7800 counts made the floor -12.5 dBFS and the
+    start threshold -3 dBFS, so speech never started (no_speech after 8 s)."""
+    frames = with_dc(room(60, 0.5) + [voiced(6000, 60)] * 50 + room(60, 12), LAPTOP_DC)
+    m, _ = mic(frames, start_timeout_s=8.0, max_utterance_s=12.0, end_silence_ms=800)
+    u = m.listen()
+    assert u.reason == "end_of_speech" and 1.5 <= u.duration_s < 4
+    assert u.speech_ms >= 1400 and u.trailing_silence_ms >= 800 // FRAME_MS * FRAME_MS
+    assert u.dc_offset_dbfs == pytest.approx(-12.5, abs=0.3)   # reported ...
+    assert u.noise_floor_dbfs < -50                            # ... but not used as noise
+    assert u.start_threshold_dbfs == pytest.approx(rms_dbfs(300), abs=0.1)
+    assert u.stop_threshold_dbfs < u.start_threshold_dbfs
+
+
+def test_dc_offset_does_not_change_decisions():
+    base = room(450, 0.5) + [voiced(6000, 450)] * 50 + room(450, 12)
+    results = []
+    for frames in (base, with_dc(base, LAPTOP_DC), with_dc(base, -LAPTOP_DC)):
+        u = mic(frames, start_timeout_s=8.0)[0].listen()
+        results.append((u.reason, u.speech_ms, u.duration_s, u.noise_floor_dbfs))
+    assert results[0] == results[1] == results[2]
+    assert results[0][0] == "end_of_speech"
+
+
+def test_speech_at_time_zero_is_detected():
+    for frames in ([voiced(6000, 60)] * 35 + room(60, 12),
+                   with_dc([voiced(6000, 60)] * 35 + room(60, 12), LAPTOP_DC)):
+        m, _ = mic(frames, start_timeout_s=8.0, end_silence_ms=800)
+        u = m.listen()
+        assert u.reason == "end_of_speech" and u.speech_ms >= 35 * FRAME_MS - 100
+        assert u.duration_s < 2.5
+        assert u.noise_floor_dbfs < -50  # learned from the silence after the speech
+
+
+def test_early_speech_during_calibration_does_not_inflate_the_floor():
+    m, _ = mic(room(60, 0.1) + [voiced(6000, 60)] * 40 + room(60, 12),
+               start_timeout_s=8.0, end_silence_ms=800)
+    u = m.listen()
+    assert u.reason == "end_of_speech" and u.speech_ms >= 40 * FRAME_MS - 100
+    assert u.noise_floor_dbfs < -50 and u.duration_s < 2.5
+
+
+def test_quiet_room_floor_and_thresholds():
+    m, _ = mic(room(60, 1.0) + [voiced(3000, 60)] * 30 + room(60, 12), start_timeout_s=8.0)
+    u = m.listen()
+    assert u.reason == "end_of_speech"
+    assert -58 < u.noise_floor_dbfs < -52                 # 60 counts ~ -54.7 dBFS
+    assert u.start_threshold_dbfs == pytest.approx(rms_dbfs(300), abs=0.1)  # min_rms guard
+    quiet = mic(room(60, 2), start_timeout_s=0.5)[0].listen()
+    assert quiet.reason == "no_speech" and quiet.dc_offset_dbfs < -60  # no offset here
+
+
+def test_noisy_room_with_dc_offset_still_ends():
+    speech = [voiced(lvl, 900) for lvl in [5000, 6500, 3500, 7000] * 15]
+    m, _ = mic(with_dc(room(900, 0.5) + speech + room(900, 12), LAPTOP_DC),
+               start_timeout_s=8.0)
+    u = m.listen()
+    assert u.reason == "end_of_speech" and u.speech_ms >= 1500
+    assert -33 < u.noise_floor_dbfs < -29                 # the fan (900 ~ -31 dBFS), not DC
+
+
+def test_dc_offset_alone_is_not_speech():
+    m, _ = mic(with_dc(room(60, 12), LAPTOP_DC), start_timeout_s=1.0)
+    u = m.listen()
+    assert u.reason == "no_speech" and u.pcm == b""
+    assert u.dc_offset_dbfs == pytest.approx(-12.5, abs=0.2)
+
+
+def test_steady_loud_room_at_start_cannot_hang_capture():
+    """A background above the absolute minimum right at t=0 can trip the warm-up start; a
+    window with no quiet frame then becomes the floor, so capture ends instead of running
+    to the cap."""
+    m, _ = mic(room(900, 12), start_timeout_s=8.0, end_silence_ms=800, max_utterance_s=12.0)
+    u = m.listen()
+    assert u.reason != "max_duration" and u.duration_s < 3
 
 
 def test_endpointer_thresholds_are_configurable(monkeypatch):

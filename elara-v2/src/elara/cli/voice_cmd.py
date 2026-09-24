@@ -21,7 +21,8 @@ def _print_turn(n: int, turn, as_json: bool) -> None:
             "capture": None if turn.utterance is None else {
                 k: getattr(turn.utterance, k) for k in (
                     "reason", "overflows", "noise_floor_dbfs", "start_threshold_dbfs",
-                    "stop_threshold_dbfs", "speech_ms", "trailing_silence_ms")},
+                    "stop_threshold_dbfs", "dc_offset_dbfs", "speech_ms",
+                    "trailing_silence_ms")},
             "transcript": None if tr is None else {
                 "text": tr.text, "language": tr.language,
                 "language_probability": tr.language_probability,
@@ -55,7 +56,8 @@ def _print_turn(n: int, turn, as_json: bool) -> None:
     if u is not None:
         print(f"   capture: {u.reason}, speech={u.speech_ms}ms, trailing_silence="
               f"{u.trailing_silence_ms}ms, floor={u.noise_floor_dbfs} dBFS, start/stop="
-              f"{u.start_threshold_dbfs}/{u.stop_threshold_dbfs} dBFS")
+              f"{u.start_threshold_dbfs}/{u.stop_threshold_dbfs} dBFS, "
+              f"dc_offset={u.dc_offset_dbfs} dBFS")
     t = turn.timings
     print("   timing:  " + "  ".join(f"{k}={v}" for k, v in t.items() if v is not None))
 
