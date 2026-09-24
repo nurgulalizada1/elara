@@ -16,11 +16,22 @@ FRAME_BYTES = SAMPLE_RATE * FRAME_MS // 1000 * 2
 
 @dataclass
 class Transcript:
+    """STT output. Only fields the engine actually reports are filled; None = not available."""
+
     text: str
     language: str | None = None
-    confidence: float | None = None      # 0..1 (e.g. exp(avg_logprob))
-    no_speech_prob: float | None = None
-    duration_s: float = 0.0
+    confidence: float | None = None      # 0..1, only for engines that report one
+    no_speech_prob: float | None = None  # faster-whisper: max over segments
+    duration_s: float = 0.0              # audio duration
+    language_probability: float | None = None  # 1.0 when the language was forced
+    avg_logprob: float | None = None     # faster-whisper: mean over segments
+    compression_ratio: float | None = None  # faster-whisper: max over segments
+    transcription_time_s: float = 0.0
+    error: str | None = None             # set when transcription failed
+
+    @property
+    def real_time_factor(self) -> float | None:
+        return round(self.transcription_time_s / self.duration_s, 3) if self.duration_s else None
 
 
 @runtime_checkable

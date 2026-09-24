@@ -172,11 +172,24 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("research", help="search scientific sources")
     r.add_argument("query", nargs="+")
     r.add_argument("--language", default="en", choices=["az", "en", "tr"])
+    v = sub.add_parser("voice", help="(dev) one bounded English voice round trip")
+    v.add_argument("--turns", type=int, default=1, choices=range(1, 21), metavar="N",
+                   help="utterances to handle before exiting (1-20, default 1)")
+    v.add_argument("--device", help="input device index or name (see --list-devices)")
+    v.add_argument("--list-devices", action="store_true", help="list microphones and exit")
+    v.add_argument("--no-speak", action="store_true", help="do not speak the answer")
+    v.add_argument("--json", action="store_true")
     return p
 
 
+def cmd_voice(args, settings: Settings) -> int:
+    from elara.cli.voice_cmd import cmd_voice as run
+    return run(args, settings)
+
+
 COMMANDS = {"chat": cmd_chat, "ask": cmd_ask, "doctor": cmd_doctor, "serve": cmd_serve,
-            "memory": cmd_memory, "tools": cmd_tools, "research": cmd_research}
+            "memory": cmd_memory, "tools": cmd_tools, "research": cmd_research,
+            "voice": cmd_voice}
 
 
 def main(argv: list[str] | None = None) -> int:

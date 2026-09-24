@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from collections.abc import Callable
+from typing import Protocol
 
 from elara.core.errors import ElaraError
 
@@ -51,3 +52,60 @@ def build_tts(name: str, voices: dict[str, str]):
         raise TTSUnavailable(f"unknown TTS provider '{name}' (available: "
                              f"{', '.join(TTS_PROVIDERS)})") from e
     return factory(voices=voices)
+
+
+# --------------------------------------------------------------- spoken responses ----
+class Speaker(Protocol):
+    """Replaceable speech output used by the voice channel. English-only for now."""
+
+    name: str
+
+    def available(self) -> bool: ...
+
+    def speak(self, text: str) -> float:
+        """Speak `text`; return seconds spent (synthesis + playback)."""
+        ...
+
+
+def play_wav(wav: bytes) -> None:
+    """Play WAV bytes on the default output device via sounddevice (blocking)."""
+    import io
+    import wave
+
+    import numpy as np
+
+    try:
+        import sounddevice as sd
+    except (OSError, ImportError) as e:
+        raise TTSUnavailable(f"audio output unavailable: {e}") from e
+    with wave.open(io.BytesIO(wav), "rb") as w:
+        rate, channels = w.getframerate(), w.getnchannels()
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    sd.play(data.reshape(-1, channels) if channels > 1 else data, samplerate=rate)
+    sd.wait()
+
+
+class EspeakSpeaker:
+    """Local fallback: espeak-ng English voice, played through sounddevice."""
+
+    name = "espeak"
+
+    def __init__(self, voice: str = "en-us", rate_wpm: int = 170, binary: str | None = None,
+                 player: Callable[[bytes], None] = play_wav, max_chars: int = 600):
+        self._tts = EspeakTTS(voices={"en": voice}, rate_wpm=rate_wpm, binary=binary)
+        self._player = player
+        self.max_chars = max_chars
+
+    def available(self) -> bool:
+        return bool(self._tts.binary)
+
+    def speak(self, text: str) -> float:
+        import time
+
+        t0 = time.perf_counter()
+        spoken = text.strip()
+        if len(spoken) > self.max_chars:  # long answers (e.g. research) stay on screen
+            spoken = spoken[: self.max_chars].rsplit(" ", 1)[0] + " …"
+        if spoken:
+            self._player(self._tts.synthesize(spoken, "en"))
+        return round(time.perf_counter() - t0, 3)
