@@ -41,8 +41,12 @@ class VoiceConfig(BaseSettings):
     min_speech_ms: int = Field(default=250, ge=0)         # shorter bursts are noise
     end_silence_ms: int = Field(default=800, ge=90)       # silence that ends an utterance
     preroll_ms: int = Field(default=300, ge=0)            # audio kept from before speech
-    vad_min_rms: float = Field(default=300.0, gt=0)       # int16 RMS (~ -40 dBFS)
-    vad_ratio: float = Field(default=3.0, gt=1)           # speech = ratio x noise floor
+    vad_min_rms: float = Field(default=300.0, gt=0)       # int16 RMS (~ -40 dBFS) minimum
+    vad_ratio: float = Field(default=3.0, gt=1)           # speech starts at floor x ratio
+    vad_stop_ratio: float = Field(default=2.0, gt=1)      # speech continues above floor x this
+    calibration_ms: int = Field(default=250, ge=FRAME_MS)  # measure room noise first
+    speech_start_ms: int = Field(default=90, ge=FRAME_MS)  # consecutive loud audio to start
+    vad_smoothing_ms: int = Field(default=90, ge=FRAME_MS)  # moving average for end-of-speech
     # --- speech output ---
     tts_enabled: bool = True
     tts_voice: str = "en-us"

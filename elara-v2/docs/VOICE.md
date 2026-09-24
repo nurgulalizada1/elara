@@ -81,7 +81,11 @@ next turn (`--turns 2`).
 | `MAX_UTTERANCE_S` | `12` | hard cap per utterance |
 | `END_SILENCE_MS` | `800` | silence that ends an utterance |
 | `MIN_SPEECH_MS` | `250` | shorter bursts are treated as noise |
-| `VAD_MIN_RMS`, `VAD_RATIO` | `300`, `3.0` | energy-VAD sensitivity |
+| `CALIBRATION_MS` | `250` | room noise is measured first (keep quiet for a moment) |
+| `VAD_RATIO` / `VAD_STOP_RATIO` | `3.0` / `2.0` | speech starts above floor×3, continues above floor×2 (hysteresis) |
+| `VAD_MIN_RMS` | `300` | absolute minimum start level (~ −41 dBFS) for very quiet rooms |
+| `SPEECH_START_MS` | `90` | consecutive loud audio needed to start (ignores clicks) |
+| `VAD_SMOOTHING_MS` | `90` | moving average used for end-of-speech decisions |
 | `TTS_ENABLED`, `TTS_VOICE`, `TTS_RATE_WPM` | `true`, `en-us`, `170` | spoken answers |
 
 ## Known limitations
@@ -89,8 +93,10 @@ next turn (`--turns 2`).
 - **Azerbaijani voice input is not supported in production** (experimental, benchmark only).
 - **Spoken arithmetic goes to the LLM.** "17 times 42" (words) doesn't match the core's local
   calculator patterns; symbols (`17 * 42`) do.
-- **Energy VAD is basic.** Steady loud background noise can delay the end-of-speech detection
-  (the hard cap still applies). Silero VAD is a later option.
+- **Endpointing is energy-based.** The room noise is calibrated in the first 250 ms. Speaking
+  instantly, or noise that changes sharply mid-utterance, can still misjudge the end; the
+  12 s cap applies. `elara voice --json` shows the measured floor and thresholds under
+  `capture`. Silero VAD is a later option.
 - **The espeak-ng voice is robotic**; `Speaker` is replaceable.
 - **Legacy `Settings` fields.** `ELARA_TTS_*` / `ELARA_STT_*` in the general settings belong to
   the older generic adapters; the voice channel uses `ELARA_VOICE_*` only.

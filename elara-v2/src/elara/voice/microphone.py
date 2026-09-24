@@ -18,7 +18,7 @@ from typing import Any
 from elara.core.errors import ElaraError
 from elara.core.logging import get_logger
 from elara.voice.config import CHANNELS, FRAME_MS, SAMPLE_RATE, VoiceConfig
-from elara.voice.vad import EnergyVAD
+from elara.voice.vad import SpeechEndpointer, rms_dbfs
 
 log = get_logger(__name__)
 
@@ -34,6 +34,12 @@ class Utterance:
     capture_s: float           # wall time from start of listening to end of utterance
     reason: str                # end_of_speech | max_duration | no_speech
     overflows: int = 0
+    # Diagnostics (levels only, never audio): what the endpointer decided with.
+    noise_floor_dbfs: float | None = None
+    start_threshold_dbfs: float | None = None
+    stop_threshold_dbfs: float | None = None
+    speech_ms: int = 0
+    trailing_silence_ms: int = 0
 
 
 # A stream factory returns an object with start()/stop()/close() that calls
@@ -91,7 +97,11 @@ class Microphone:
         cfg = self.config
         frames: queue.Queue[bytes] = queue.Queue(maxsize=int(10_000 / FRAME_MS))
         stream = self._factory(lambda b: frames.put_nowait(b) if not frames.full() else None)
-        vad = EnergyVAD(ratio=cfg.vad_ratio, min_rms=cfg.vad_min_rms)
+        ep = SpeechEndpointer(min_rms=cfg.vad_min_rms, start_ratio=cfg.vad_ratio,
+                              stop_ratio=min(cfg.vad_stop_ratio, cfg.vad_ratio),
+                              calibration_frames=cfg.calibration_ms // FRAME_MS,
+                              start_frames=cfg.speech_start_ms // FRAME_MS,
+                              smoothing_frames=cfg.vad_smoothing_ms // FRAME_MS)
         preroll: deque[bytes] = deque(maxlen=max(1, cfg.preroll_ms // FRAME_MS))
         captured: list[bytes] = []
         speech_frames = silence_frames = 0
@@ -114,15 +124,15 @@ class Microphone:
                         continue
                     reason = "end_of_speech"  # stream stalled mid-utterance: stop cleanly
                     break
-                speech = vad.is_speech(frame)
+                state = ep.update(frame)
                 if not captured:
                     preroll.append(frame)
-                    if speech:
-                        captured.extend(preroll)
-                        speech_frames = 1
+                    if state == "start":
+                        captured.extend(preroll)  # pre-roll keeps the first syllable
+                        speech_frames = ep.start_frames
                     continue
                 captured.append(frame)
-                if speech:
+                if state == "speech":
                     speech_frames += 1
                     silence_frames = 0
                 else:
@@ -143,6 +153,12 @@ class Microphone:
             captured, reason = [], "no_speech"  # a click or bump, not speech
         pcm = b"".join(captured)
         overflows = getattr(stream, "overflow_counter", {}).get("n", 0)
+        floor = ep.noise_floor
         return Utterance(pcm=pcm, duration_s=round(len(pcm) / (SAMPLE_RATE * 2), 3),
                          capture_s=round(time.monotonic() - t0, 3), reason=reason,
-                         overflows=overflows)
+                         overflows=overflows,
+                         noise_floor_dbfs=rms_dbfs(floor) if floor else None,
+                         start_threshold_dbfs=rms_dbfs(ep.start_threshold) if floor else None,
+                         stop_threshold_dbfs=rms_dbfs(ep.stop_threshold) if floor else None,
+                         speech_ms=speech_frames * FRAME_MS if pcm else 0,
+                         trailing_silence_ms=silence_frames * FRAME_MS if pcm else 0)

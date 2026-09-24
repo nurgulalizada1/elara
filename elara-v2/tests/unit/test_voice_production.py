@@ -5,6 +5,7 @@ Hardware-free: the microphone stream, faster-whisper model and espeak binary are
 
 import math
 import threading
+import time
 import types
 from array import array
 
@@ -19,6 +20,7 @@ from elara.voice.quality import TranscriptQualityGate
 from elara.voice.session import VoiceSession
 from elara.voice.stt import FasterWhisperSTT, STTUnavailable
 from elara.voice.tts import EspeakSpeaker, TTSUnavailable
+from elara.voice.vad import SpeechEndpointer
 from tests.fakes import ScriptedProvider, text
 
 np = pytest.importorskip("numpy")
@@ -80,27 +82,95 @@ def test_config_defaults_and_english_only(monkeypatch):
 
 
 # --------------------------------------------------------------------- microphone ----
-def test_microphone_captures_one_utterance_with_preroll():
-    m, streams = mic([SIL] * 5 + [SPEECH] * 20 + [SIL] * 20)
+_rng = __import__("random").Random(1234)
+
+
+def noise(rms: float) -> bytes:
+    """Gaussian background noise at a given int16 RMS (deterministic seed)."""
+    return array("h", [max(-32768, min(32767, int(_rng.gauss(0, rms)))) for _ in range(N)]
+                 ).tobytes()
+
+
+def voiced(level: float, bg: float = 0.0) -> bytes:
+    """Speech-like frame (tone at RMS `level`) mixed with background noise `bg`."""
+    return array("h", [max(-32768, min(32767, int(level * 1.414 * math.sin(
+        2 * math.pi * 220 * i / SAMPLE_RATE) + (_rng.gauss(0, bg) if bg else 0))))
+        for i in range(N)]).tobytes()
+
+
+def room(bg: float, seconds: float) -> list[bytes]:
+    return [noise(bg) for _ in range(int(seconds * 1000 / FRAME_MS))]
+
+
+# The tail of every stream is 12 s of room noise: like a real mic it never "runs out",
+# so an early end can only come from end-of-speech detection.
+def test_speech_then_silence_ends_well_before_max_duration():
+    m, streams = mic(room(60, 0.5) + [voiced(6000, 60)] * 50 + room(60, 12))
     u = m.listen()
     assert u.reason == "end_of_speech" and streams[0].stopped and streams[0].closed
-    frames = len(u.pcm) // (N * 2)
-    assert 20 + 1 <= frames <= 5 + 20 + 10  # speech + preroll + trailing silence
-    assert u.duration_s == round(len(u.pcm) / (SAMPLE_RATE * 2), 3)
+    assert 1.5 <= u.duration_s <= 3.0  # ~1.5 s speech + pre-roll + end silence
+    assert u.trailing_silence_ms >= 300 and u.speech_ms >= 1400
 
 
-def test_microphone_no_speech_times_out_and_closes():
-    m, streams = mic([SIL] * 5, start_timeout_s=0.6)
+def test_laptop_mic_background_above_absolute_minimum_still_ends():
+    """Regression: background at ~-37 dBFS (RMS 450 > vad_min_rms 300) used to be classified
+    as speech forever, so capture always ran to max_duration."""
+    m, _ = mic(room(450, 0.5) + [voiced(6000, 450)] * 50 + room(450, 12),
+               start_timeout_s=8.0, max_utterance_s=12.0)
+    u = m.listen()
+    assert u.reason == "end_of_speech" and u.duration_s < 4
+    assert -40 < u.noise_floor_dbfs < -34 and u.start_threshold_dbfs > u.stop_threshold_dbfs
+
+
+def test_continuous_speech_with_word_gaps_is_not_cut():
+    words = [voiced(6000, 80)] * 12
+    gap = room(80, 0.3)  # 300 ms pauses between phrases, shorter than end_silence (800 ms)
+    m, _ = mic(room(80, 0.5) + words + gap + words + gap + words + room(80, 12))
+    u = m.listen()
+    assert u.reason == "end_of_speech"
+    assert u.duration_s >= 36 * FRAME_MS / 1000 + 0.6  # all three phrases + both gaps kept
+
+
+def test_noisy_but_spoken_input_does_not_end_immediately():
+    # loud fan (~-31 dBFS) with speech ~16 dB above it; speech level also varies
+    speech = [voiced(lvl, 900) for lvl in [5000, 6500, 3500, 7000] * 15]
+    m, _ = mic(room(900, 0.5) + speech + room(900, 12))
+    u = m.listen()
+    assert u.reason == "end_of_speech"
+    assert u.speech_ms >= 1500 and u.duration_s >= 1.8  # not truncated after a few frames
+
+
+def test_short_click_before_speech_is_ignored():
+    m, _ = mic(room(60, 0.5) + [voiced(20000)] * 2 + room(60, 0.5)
+               + [voiced(6000, 60)] * 30 + room(60, 12))
+    u = m.listen()
+    assert u.reason == "end_of_speech" and u.speech_ms >= 30 * FRAME_MS - 100
+    m, _ = mic(room(60, 0.5) + [voiced(20000)] * 2 + room(60, 12), start_timeout_s=1.5)
+    assert m.listen().reason == "no_speech"  # a click alone never becomes an utterance
+
+
+def test_initial_silence_still_times_out():
+    m, streams = mic(room(60, 12), start_timeout_s=1.0)
+    t0 = time.monotonic()
     u = m.listen()
     assert u.pcm == b"" and u.reason == "no_speech" and streams[0].closed
+    assert time.monotonic() - t0 < 3
 
 
-def test_microphone_ignores_click_and_caps_duration():
-    m, _ = mic([SIL] * 3 + [SPEECH] * 2 + [SIL] * 20, min_speech_ms=250)
-    assert m.listen().reason == "no_speech"  # 60 ms burst is not speech
-    m, _ = mic([SPEECH] * 200, max_utterance_s=1.0)
+def test_max_duration_remains_the_safety_cap():
+    m, _ = mic(room(60, 0.5) + [voiced(6000, 60)] * 400, max_utterance_s=2.0)
     u = m.listen()
-    assert u.reason == "max_duration" and 0.9 <= u.duration_s <= 1.4
+    assert u.reason == "max_duration" and 1.9 <= u.duration_s <= 2.4
+
+
+def test_endpointer_thresholds_are_configurable(monkeypatch):
+    monkeypatch.setenv("ELARA_VOICE_END_SILENCE_MS", "400")
+    monkeypatch.setenv("ELARA_VOICE_VAD_STOP_RATIO", "1.5")
+    monkeypatch.setenv("ELARA_VOICE_CALIBRATION_MS", "150")
+    c = VoiceConfig()
+    assert (c.end_silence_ms, c.vad_stop_ratio, c.calibration_ms) == (400, 1.5, 150)
+    with pytest.raises(ValueError):
+        SpeechEndpointer(start_ratio=2.0, stop_ratio=3.0)
 
 
 def test_microphone_errors_are_reported(monkeypatch):
