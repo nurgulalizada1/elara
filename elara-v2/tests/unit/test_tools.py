@@ -234,7 +234,7 @@ async def test_web_fetch_parses_html_and_blocks_private():
 
 
 def test_html_to_text():
-    assert html_to_text("<p>a</p><p>b</p>")[1] == "a\n\nb"
+    assert html_to_text("<p>a</p><p>b</p>")[1] == "a\nb"
 
 
 async def test_pdf_without_text_reports_error(env):
