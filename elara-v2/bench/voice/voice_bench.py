@@ -11,6 +11,7 @@ Subcommands:
   mic-check  [--seconds 5]        record, verify the WAV, report RMS/peak
   record     --seconds N --out F  record a clip (16 kHz, mono, 16-bit PCM)
   transcribe WAV --model small    transcribe with faster-whisper on CPU (int8, language=az)
+  compare --az A.wav --en B.wav   same model/config on an Azerbaijani and an English clip
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import time
 import warnings
@@ -131,47 +133,63 @@ def mic_check(seconds: float, device, out: Path) -> dict:
 
 
 # ------------------------------------------------------------------- transcription ----
-def transcribe(wav: Path, model_size: str, threads: int, beam_size: int, language: str,
-               local_only: bool) -> dict:
-    import numpy as np
+class _Collect(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record):
+        if record.levelno >= logging.WARNING:
+            self.messages.append(f"{record.name}: {record.getMessage()}")
+
+
+def load_model(model_size: str, threads: int, local_only: bool):
     from faster_whisper import WhisperModel
 
-    report: dict = {"model": model_size, "device": "cpu", "compute_type": "int8",
-                    "cpu_threads": threads, "num_workers": 1, "logical_cpus": os.cpu_count(),
-                    "beam_size": beam_size, "forced_language": language, "file": str(wav),
-                    "warnings": []}
+    t0 = time.perf_counter()
+    model = WhisperModel(model_size, device="cpu", compute_type="int8", cpu_threads=threads,
+                         num_workers=1, local_files_only=local_only)
+    return model, round(time.perf_counter() - t0, 2)
+
+
+def _load_audio(wav: Path, report: dict):
+    import numpy as np
+
     params, samples = read_wav(wav)
     report["audio_duration_s"] = params["duration_s"]
     if (params["sample_rate"], params["channels"], params["sample_width_bytes"]) == (
             SAMPLE_RATE, CHANNELS, SAMPLE_WIDTH):
-        audio = np.frombuffer(samples.tobytes(), dtype=np.int16).astype(np.float32) / 32768.0
-    else:  # let faster-whisper decode/resample other formats itself
-        report["warnings"].append(f"non-standard WAV {params}; decoded by faster-whisper")
-        audio = str(wav)
+        return np.frombuffer(samples.tobytes(), dtype=np.int16).astype(np.float32) / 32768.0
+    report["warnings"].append(f"non-standard WAV {params}; decoded by faster-whisper")
+    from faster_whisper import decode_audio
+    return decode_audio(str(wav), sampling_rate=SAMPLE_RATE)
 
-    log_records: list[str] = []
 
-    class _Collect(logging.Handler):
-        def emit(self, record):
-            if record.levelno >= logging.WARNING:
-                log_records.append(f"{record.name}: {record.getMessage()}")
-
-    handler = _Collect()
-    logging.getLogger().addHandler(handler)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        t0 = time.perf_counter()
-        model = WhisperModel(model_size, device="cpu", compute_type="int8", cpu_threads=threads,
-                             num_workers=1, local_files_only=local_only)
-        report["load_time_s"] = round(time.perf_counter() - t0, 2)
-        t1 = time.perf_counter()
-        segments, info = model.transcribe(audio, language=language, beam_size=beam_size,
-                                          vad_filter=False, condition_on_previous_text=False)
-        seg_list = list(segments)  # decoding happens while iterating
-        report["transcription_time_s"] = round(time.perf_counter() - t1, 2)
-    logging.getLogger().removeHandler(handler)
-    report["warnings"] += [str(w.message) for w in caught] + log_records
-
+def run_one(model, wav: Path, language: str, beam_size: int, reference: str | None = None,
+            detect: bool = True) -> dict:
+    """Transcribe one WAV with an already-loaded model. The language is forced; the
+    unforced language detection is reported separately so misrecognition is visible."""
+    report: dict = {"file": str(wav), "forced_language": language, "beam_size": beam_size,
+                    "warnings": []}
+    audio = _load_audio(wav, report)
+    collector = _Collect()
+    logging.getLogger().addHandler(collector)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            if detect and hasattr(model, "detect_language"):
+                lang, prob, all_probs = model.detect_language(audio)
+                report["detected_language"] = lang
+                report["detected_probability"] = round(prob, 3)
+                report["detected_top3"] = [(code, round(p, 3)) for code, p in all_probs[:3]]
+            t1 = time.perf_counter()
+            segments, info = model.transcribe(audio, language=language, beam_size=beam_size,
+                                              vad_filter=False, condition_on_previous_text=False)
+            seg_list = list(segments)  # decoding happens while iterating
+            report["transcription_time_s"] = round(time.perf_counter() - t1, 2)
+    finally:
+        logging.getLogger().removeHandler(collector)
+    report["warnings"] += [str(w.message) for w in caught] + collector.messages
     dur = report["audio_duration_s"] or 0
     report["real_time_factor"] = round(report["transcription_time_s"] / dur, 3) if dur else None
     report["language"] = info.language
@@ -180,7 +198,70 @@ def transcribe(wav: Path, model_size: str, threads: int, beam_size: int, languag
     report["segments"] = [{"start": round(s.start, 2), "end": round(s.end, 2),
                            "text": s.text.strip(), "avg_logprob": round(s.avg_logprob, 3),
                            "no_speech_prob": round(s.no_speech_prob, 3)} for s in seg_list]
+    if reference:
+        report["reference"] = reference
+        report["wer"] = error_rate(reference, report["text"], words=True)
+        report["cer"] = error_rate(reference, report["text"], words=False)
     return report
+
+
+def _config(model_size: str, threads: int) -> dict:
+    return {"model": model_size, "device": "cpu", "compute_type": "int8",
+            "cpu_threads": threads, "num_workers": 1, "logical_cpus": os.cpu_count()}
+
+
+def transcribe(wav: Path, model_size: str, threads: int, beam_size: int, language: str,
+               local_only: bool, reference: str | None = None) -> dict:
+    model, load_s = load_model(model_size, threads, local_only)
+    return {**_config(model_size, threads), "load_time_s": load_s,
+            **run_one(model, wav, language, beam_size, reference)}
+
+
+def compare(clips: list[tuple[str, Path, str | None]], model_size: str, threads: int,
+            beam_size: int, local_only: bool) -> dict:
+    """Run identical settings over several (language, wav, reference) clips; one model load."""
+    model, load_s = load_model(model_size, threads, local_only)
+    return {**_config(model_size, threads), "beam_size": beam_size, "load_time_s": load_s,
+            "runs": [run_one(model, wav, lang, beam_size, ref) for lang, wav, ref in clips]}
+
+
+def error_rate(reference: str, hypothesis: str, *, words: bool) -> float | None:
+    """WER (words=True) or CER via edit distance, after lowercasing and stripping punctuation."""
+    def units(t: str) -> list[str]:
+        cleaned = re.sub(r"[^\w\s]", " ", t.casefold())
+        return cleaned.split() if words else list("".join(cleaned.split()))
+
+    ref, hyp = units(reference), units(hypothesis)
+    if not ref:
+        return None
+    prev = list(range(len(hyp) + 1))
+    for i, r in enumerate(ref, 1):
+        cur = [i] + [0] * len(hyp)
+        for j, h in enumerate(hyp, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (r != h))
+        prev = cur
+    return round(prev[-1] / len(ref), 3)
+
+
+def print_comparison(report: dict) -> None:
+    print(f"model={report['model']} device={report['device']} compute={report['compute_type']} "
+          f"threads={report['cpu_threads']} workers={report['num_workers']} "
+          f"beam={report['beam_size']} load={report['load_time_s']}s")
+    cols = ("forced", "audio_s", "stt_s", "RTF", "detected (p)", "WER", "CER")
+    print("  ".join(f"{c:>14}" for c in cols))
+    for r in report["runs"]:
+        det = (f"{r.get('detected_language', '?')} ({r.get('detected_probability', '?')})")
+        vals = (r["forced_language"], r["audio_duration_s"], r["transcription_time_s"],
+                r["real_time_factor"], det, r.get("wer", "-"), r.get("cer", "-"))
+        print("  ".join(f"{str(v):>14}" for v in vals))
+    for r in report["runs"]:
+        print(f"\n[{r['forced_language']}] {r['file']}")
+        print(f"  detected top3: {r.get('detected_top3', '?')}")
+        print(f"  text: {r['text']}")
+        if "reference" in r:
+            print(f"  ref:  {r['reference']}")
+        for w in r["warnings"]:
+            print(f"  warning: {w}")
 
 
 # ---------------------------------------------------------------------------- CLI -----
@@ -220,7 +301,17 @@ def main(argv: list[str] | None = None) -> int:
     tr.add_argument("--language", default="az")
     tr.add_argument("--local-files-only", action="store_true",
                     help="never download; fail if the model is not cached")
-    for sp in (mc, tr):
+    tr.add_argument("--reference", help="expected transcript, to compute WER/CER")
+    cp = sub.add_parser("compare", help="same model/config on an az and an en recording")
+    cp.add_argument("--az", type=Path, required=True, help="Azerbaijani WAV (forced az)")
+    cp.add_argument("--en", type=Path, required=True, help="English WAV (forced en)")
+    cp.add_argument("--az-ref", help="what was actually said in the az clip (for WER/CER)")
+    cp.add_argument("--en-ref", help="what was actually said in the en clip (for WER/CER)")
+    cp.add_argument("--model", choices=MODELS, default="small")
+    cp.add_argument("--threads", type=int, default=8)
+    cp.add_argument("--beam-size", type=int, default=5)
+    cp.add_argument("--local-files-only", action="store_true")
+    for sp in (mc, tr, cp):
         sp.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
 
@@ -243,7 +334,19 @@ def main(argv: list[str] | None = None) -> int:
             if not 1 <= args.threads <= (os.cpu_count() or 1):
                 p.error(f"--threads must be between 1 and {os.cpu_count()}")
             _print(transcribe(args.wav, args.model, args.threads, args.beam_size,
-                              args.language, args.local_files_only), args.json)
+                              args.language, args.local_files_only, args.reference), args.json)
+        elif args.cmd == "compare":
+            for f in (args.az, args.en):
+                if not f.exists():
+                    p.error(f"no such file: {f}")
+            if not 1 <= args.threads <= (os.cpu_count() or 1):
+                p.error(f"--threads must be between 1 and {os.cpu_count()}")
+            report = compare([("az", args.az, args.az_ref), ("en", args.en, args.en_ref)],
+                             args.model, args.threads, args.beam_size, args.local_files_only)
+            if args.json:
+                print(json.dumps(report, indent=2, ensure_ascii=False))
+            else:
+                print_comparison(report)
     except KeyboardInterrupt:
         return 130
     except Exception as e:  # report failures (model download, device errors) plainly

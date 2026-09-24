@@ -30,6 +30,13 @@ python bench/voice/voice_bench.py transcribe bench/voice/recordings/az-01.wav --
 python bench/voice/voice_bench.py transcribe bench/voice/recordings/az-01.wav --model medium --threads 8
 # add --json for machine-readable output, --local-files-only to forbid downloads
 
+# 4. az vs en: identical model/config on both clips (model loaded once)
+python bench/voice/voice_bench.py record --seconds 8 --out bench/voice/recordings/en-01.wav
+python bench/voice/voice_bench.py compare \
+    --az bench/voice/recordings/az-01.wav --az-ref "<exactly what you said in Azerbaijani>" \
+    --en bench/voice/recordings/en-01.wav --en-ref "<exactly what you said in English>" \
+    --model small --threads 8 --beam-size 5
+
 # tests for this harness only
 python -m pytest -q bench/voice
 ```

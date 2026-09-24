@@ -108,3 +108,75 @@ def test_cli_rejects_bad_arguments(tmp_path):
         vb.main(["transcribe", str(tmp_path / "missing.wav"), "--model", "small"])
     with pytest.raises(SystemExit):
         vb.main(["transcribe", "x.wav", "--model", "gigantic"])
+
+
+# ------------------------------------------------------------ az vs en comparison ----
+class FakeWhisper:
+    """Records calls; detect_language reports what the audio 'sounds like'."""
+
+    instances = 0
+
+    def __init__(self, size, **kw):
+        FakeWhisper.instances += 1
+        self.size, self.kw, self.calls = size, kw, []
+
+    def detect_language(self, audio):
+        guess = "tr" if len(audio) == 3 * vb.SAMPLE_RATE else "en"
+        return guess, 0.61, [(guess, 0.61), ("az", 0.3), ("ru", 0.05)]
+
+    def transcribe(self, audio, **kw):
+        self.calls.append(kw)
+        text = {"az": " Salam, bu gün hava necədir? ", "en": " Hello, what is the weather? "}
+        seg = types.SimpleNamespace(start=0.0, end=2.0, text=text[kw["language"]],
+                                    avg_logprob=-0.3, no_speech_prob=0.02)
+        return iter([seg]), types.SimpleNamespace(language=kw["language"],
+                                                  language_probability=1.0)
+
+
+def _clips(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sounddevice(tone(4)))
+    az = vb.record(3, tmp_path / "az.wav")
+    en = vb.record(4, tmp_path / "en.wav")
+    fw = types.ModuleType("faster_whisper")
+    fw.WhisperModel = FakeWhisper
+    monkeypatch.setitem(sys.modules, "faster_whisper", fw)
+    FakeWhisper.instances = 0
+    return az, en
+
+
+def test_compare_uses_identical_config_and_one_model(monkeypatch, tmp_path):
+    az, en = _clips(monkeypatch, tmp_path)
+    r = vb.compare([("az", az, "Salam bu gün hava necədir"), ("en", en, None)],
+                   "small", 8, 5, local_only=True)
+    assert FakeWhisper.instances == 1  # loaded once, reused for both clips
+    assert (r["model"], r["device"], r["compute_type"], r["cpu_threads"], r["num_workers"],
+            r["beam_size"]) == ("small", "cpu", "int8", 8, 1, 5)
+    az_run, en_run = r["runs"]
+    assert (az_run["forced_language"], en_run["forced_language"]) == ("az", "en")
+    assert az_run["language"] == "az" and az_run["language_probability"] == 1.0
+    # unforced detection is reported separately (here: az audio "heard" as Turkish)
+    assert az_run["detected_language"] == "tr" and az_run["detected_top3"][1][0] == "az"
+    assert az_run["audio_duration_s"] == 3.0 and en_run["audio_duration_s"] == 4.0
+    assert az_run["real_time_factor"] == round(az_run["transcription_time_s"] / 3.0, 3)
+    assert az_run["wer"] == 0.0 and az_run["cer"] == 0.0 and "wer" not in en_run
+
+
+def test_error_rates():
+    assert vb.error_rate("Salam, dünya!", "salam dünya", words=True) == 0.0
+    assert vb.error_rate("mən proqramçıyam", "men proqramciyam", words=True) == 1.0
+    assert vb.error_rate("mən", "men", words=False) == round(1 / 3, 3)  # ə -> e
+    assert vb.error_rate("a b c d", "a x c", words=True) == 0.5  # 1 sub + 1 del
+    assert vb.error_rate("", "anything", words=True) is None
+
+
+def test_compare_cli_prints_compact_table(monkeypatch, tmp_path, capsys):
+    az, en = _clips(monkeypatch, tmp_path)
+    monkeypatch.setattr(vb.os, "cpu_count", lambda: 16)
+    assert vb.main(["compare", "--az", str(az), "--en", str(en), "--az-ref", "salam",
+                    "--local-files-only"]) == 0
+    out = capsys.readouterr().out
+    assert "model=small device=cpu compute=int8 threads=8 workers=1 beam=5" in out
+    assert "detected (p)" in out and "WER" in out and "Hello, what is the weather?" in out
+    assert "[az]" in out and "[en]" in out
+    with pytest.raises(SystemExit):
+        vb.main(["compare", "--az", str(tmp_path / "missing.wav"), "--en", str(en)])
