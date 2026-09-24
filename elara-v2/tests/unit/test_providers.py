@@ -6,7 +6,14 @@ from pydantic import BaseModel
 
 from elara.core.errors import ProviderError, ProviderUnavailable
 from elara.database.audit import AuditLog
-from elara.providers import ChatMessage, CompletionRequest, LLMService, ToolCall, ToolResult, ToolSpec
+from elara.providers import (
+    ChatMessage,
+    CompletionRequest,
+    LLMService,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
+)
 from elara.providers.anthropic import AnthropicProvider
 from elara.providers.openai import OpenAIProvider
 from tests.fakes import ScriptedProvider, text

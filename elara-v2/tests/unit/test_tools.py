@@ -1,5 +1,4 @@
 import asyncio
-import sys
 from typing import ClassVar
 
 import httpx

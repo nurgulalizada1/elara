@@ -34,8 +34,8 @@ from elara.research.synthesis import Synthesizer
 from elara.security.input import clean_user_text
 from elara.security.untrusted import Trust, wrap_untrusted
 from elara.tools.base import Origin, ToolContext
-from elara.tools.confirmations import ConfirmationStore, PendingAction
 from elara.tools.builtin.calculator import evaluate, format_number, normalize_expression
+from elara.tools.confirmations import ConfirmationStore, PendingAction
 from elara.tools.executor import Status, ToolExecutor, ToolOutcome
 
 log = get_logger(__name__)

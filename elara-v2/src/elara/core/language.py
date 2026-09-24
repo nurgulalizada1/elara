@@ -17,7 +17,7 @@ _AZ = {
     "xeyr", "hə", "bu", "o", "da", "də", "ki", "mənim", "sənin", "bir", "edə", "bilərsən",
     "yadda", "saxla", "unut", "haqqında", "tap", "aç", "göstər", "nədir", "neçə", "neçədir",
     "indi", "sabah", "bugün", "bu gün", "istəyirəm", "lazımdır", "olar", "axtar", "məqalə",
-    "tədqiqat", "gen", "həm", "amma", "çünki", "əgər", "hansı", "kimi", "mənə", "sənə",
+    "tədqiqat", "gen", "həm", "amma", "çünki", "əgər", "kimi", "mənə", "sənə",
     "eləmə", "elə", "et", "edir", "hesabla", "təşəkkür", "sağol", "gecən", "sabahın", "xeyir",
 }
 _TR = {
