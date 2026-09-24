@@ -90,6 +90,16 @@ MESSAGES: dict[str, dict[str, str]] = {
                        "tr": "Mesaj çok uzun ({n} karakter, en fazla {max})."},
     "empty_input": {"az": "Nəsə yazmaq istədin?", "en": "Did you want to say something?",
                     "tr": "Bir şey mi yazmak istedin?"},
+    "open_unknown": {
+        "az": "“{target}” harada olduğunu bilmirəm. Məsələn belə de: “yadda saxla ki mənim {target} "
+              "qovluğum ~/yol/qovluq-dur” və ya ELARA_NAMED_PATHS ayarını istifadə et.",
+        "en": "I don't know where “{target}” is. Tell me, e.g. “remember that my {target} folder "
+              "is ~/path/to/it”, or set ELARA_NAMED_PATHS.",
+        "tr": "“{target}” nerede bilmiyorum. Örneğin “hatırla ki benim {target} klasörüm "
+              "~/yol/klasör” de ya da ELARA_NAMED_PATHS ayarını kullan."},
+    "memory_found": {"az": "Yaddaşımda belə qeyd var: {content}",
+                     "en": "From what you told me: {content}",
+                     "tr": "Kayıtlarıma göre: {content}"},
     "db_error": {"az": "Yerli verilənlər bazasında xəta baş verdi: {error}",
                  "en": "A local database error occurred: {error}",
                  "tr": "Yerel veritabanında hata oluştu: {error}"},

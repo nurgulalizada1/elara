@@ -42,7 +42,7 @@ SUPPORTED = ("az", "en", "tr")
 
 
 def detect_language(text: str, fallback: str = "az") -> str:
-    lowered = text.lower()
+    lowered = text[:1000].lower()
     words = _WORD.findall(lowered)
     if not words:
         return fallback
@@ -63,9 +63,9 @@ def detect_language(text: str, fallback: str = "az") -> str:
     if any(("x" in w or "q" in w) for w in native):
         scores["az"] += 1
     # Turkish-only markers.
-    if re.search(r"\w+(ıyor|iyor|uyor|üyor)", lowered):
+    if re.search(r"\B(ıyor|iyor|uyor|üyor)", lowered):
         scores["tr"] += 2
-    if re.search(r"\w+(ır|ir|ur|ür)am\b|\w+(ıram|irəm|uram|ürəm)\b", lowered):
+    if re.search(r"\B(ıram|irəm|uram|ürəm)\b", lowered):
         scores["az"] += 2
 
     best = max(scores, key=lambda k: scores[k])

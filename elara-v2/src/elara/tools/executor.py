@@ -40,7 +40,8 @@ class ToolOutcome(BaseModel):
     tool: str
     status: Status
     output: dict[str, Any] | None = None
-    text: str = ""                       # rendering for model/user (enveloped if untrusted)
+    text: str = ""                       # rendering for the model (enveloped if untrusted)
+    display: str = ""                    # plain rendering for showing to the user
     error: str | None = None
     trust: Trust = Trust.SYSTEM
     pending: PendingAction | None = None
@@ -131,7 +132,8 @@ class ToolExecutor:
     def _success(self, tool: Tool, args: BaseModel, result: BaseModel) -> ToolOutcome:
         rendered = tool.render(result)
         outcome = ToolOutcome(tool=tool.name, status=Status.OK,
-                              output=result.model_dump(mode="json"), trust=tool.output_trust)
+                              output=result.model_dump(mode="json"), trust=tool.output_trust,
+                              display=rendered)
         if tool.output_trust == Trust.UNTRUSTED:
             wrapped = wrap_untrusted(rendered, tool.source_label(args), detector=self.detector)
             outcome.text = wrapped.text
