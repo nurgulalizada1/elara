@@ -46,3 +46,29 @@ python bench/voice/voice_bench.py corpus bench/voice/corpus.example.tsv \
 # tests for this harness only
 python -m pytest -q bench/voice
 ```
+
+## Wake-word spike: "Hey ELARA" (`wakeword_bench.py`)
+
+This is an experiment and is not wired into `elara voice`. It detects the phrase with
+openWakeWord's frozen feature front end (`melspectrogram.onnx` + `embedding_model.onnx`, about
+2.4 MB), run directly with `onnxruntime`. faster-whisper already installs onnxruntime, so there
+are **no new Python packages**. There is no trained "Hey ELARA" model yet, so the spike uses
+**few-shot enrollment**: you record the phrase about 5 times, and the live audio is compared
+with those templates every 80 ms using DTW on the 96-dimensional embeddings. Whisper is never
+used, and no audio leaves the machine. Enrollment stores embeddings only, not audio.
+
+```bash
+python bench/voice/wakeword_bench.py fetch-models        # once; sha256-pinned, into bench/voice/models/
+python bench/voice/wakeword_bench.py selftest            # optional synthetic check (needs espeak-ng)
+
+# 1. enroll: 5 x "Hey ELARA", then 15 s of normal talking WITHOUT the phrase (for the threshold)
+python bench/voice/wakeword_bench.py enroll --count 5 --neg-seconds 15 [--device N]
+
+# 2. live test: say "Hey ELARA" a few times, talk normally, stay quiet; Ctrl+C to stop early
+python bench/voice/wakeword_bench.py listen --seconds 60 [--device N]
+```
+
+`listen` prints each detection with its DTW distance and how long after the end of the speech
+it fired. At the end it prints the compute time per 80 ms chunk and the process CPU as a
+percentage of one core. To score recorded WAVs offline (for example clips from `voice_bench.py
+record`), use `eval --pos a.wav ... --neg b.wav`.
