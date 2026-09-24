@@ -1,5 +1,6 @@
 """Tests for the isolated benchmark harness (fake audio device and fake model; no network)."""
 
+import json
 import math
 import sys
 import types
@@ -180,3 +181,86 @@ def test_compare_cli_prints_compact_table(monkeypatch, tmp_path, capsys):
     assert "[az]" in out and "[en]" in out
     with pytest.raises(SystemExit):
         vb.main(["compare", "--az", str(tmp_path / "missing.wav"), "--en", str(en)])
+
+
+# ------------------------------------------------------- normalization and corpus ----
+@pytest.mark.parametrize("text,lang,expected", [
+    ("IŞIQ", "az", "ışıq"),                       # dotless capital I -> ı (not i)
+    ("İstanbul", "az", "istanbul"),               # dotted capital İ -> i (no U+0307)
+    ("İzmir", "en", "izmir"),
+    ("I am here", "en", "i am here"),             # English I stays i
+    ("Ağ, çöl; şüşə!", "az", "ağ çöl şüşə"),      # letters kept, punctuation removed
+    ("PubMed-də BRCA1 geni", "az", "pubmed də brca1 geni"),
+    ("ə", "az", "ə"),
+])
+def test_normalize_azerbaijani(text, lang, expected):
+    assert vb.normalize(text, lang) == expected
+
+
+def test_normalize_nfc_and_determinism():
+    decomposed = "gün çöl"     # 'gün çöl' written with combining marks
+    assert vb.normalize(decomposed, "az") == "gün çöl"
+    ref, hyp = "Mən ELARA ilə danışıram.", "men elara ile danisiram"
+    first = vb.edit_stats(ref, hyp, words=True, language="az")
+    assert all(vb.edit_stats(ref, hyp, words=True, language="az") == first for _ in range(5))
+    assert first == (3, 4)  # mən, ilə, danışıram wrong; elara right
+    assert vb.error_rate("IŞIQ", "ışıq", words=True, language="az") == 0.0
+    assert vb.error_rate("IŞIQ", "ışıq", words=True, language="en") == 1.0  # no Turkic rule
+
+
+def test_example_corpus_file_parses(tmp_path):
+    src = Path(vb.__file__).with_name("corpus.example.tsv")
+    (tmp_path / "recordings").mkdir()
+    for name in ("az-c1", "az-c2", "az-c3", "en-c1", "en-c2", "en-c3"):
+        (tmp_path / "recordings" / f"{name}.wav").write_bytes(b"")
+    (tmp_path / "corpus.tsv").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    clips = vb.read_corpus(tmp_path / "corpus.tsv")
+    assert [c[0] for c in clips] == ["az"] * 3 + ["en"] * 3
+    assert all(c[1].parent == tmp_path / "recordings" for c in clips)
+    az_text = " ".join(c[2] for c in clips if c[0] == "az")
+    assert all(ch in az_text for ch in "əışçğöü")
+
+
+def test_read_corpus_errors(tmp_path):
+    (tmp_path / "bad.tsv").write_text("az\tonly-two-fields\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="expected"):
+        vb.read_corpus(tmp_path / "bad.tsv")
+    (tmp_path / "missing.tsv").write_text("az\tnope.wav\tsalam\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no such file"):
+        vb.read_corpus(tmp_path / "missing.tsv")
+    (tmp_path / "empty.tsv").write_text("# nothing\n\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no clips"):
+        vb.read_corpus(tmp_path / "empty.tsv")
+
+
+def test_corpus_run_six_clips_one_model(monkeypatch, tmp_path, capsys):
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sounddevice(tone(4)))
+    rec = tmp_path / "recordings"
+    lines = []
+    for lang, i, secs, ref in [("az", 1, 3, "Salam, bu gün hava necədir?"),
+                               ("az", 2, 3, "Salam bu gün hava necə"),
+                               ("az", 3, 3, "IŞIQ yandır"),
+                               ("en", 1, 4, "Hello, what is the weather?"),
+                               ("en", 2, 4, "Hello what is the weather"),
+                               ("en", 3, 4, "Good morning")]:
+        vb.record(secs, rec / f"{lang}-c{i}.wav")
+        lines.append(f"{lang}\trecordings/{lang}-c{i}.wav\t{ref}")
+    (tmp_path / "c.tsv").write_text("# test\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    fw = types.ModuleType("faster_whisper")
+    fw.WhisperModel = FakeWhisper
+    monkeypatch.setitem(sys.modules, "faster_whisper", fw)
+    monkeypatch.setattr(vb.os, "cpu_count", lambda: 16)
+    FakeWhisper.instances = 0
+    assert vb.main(["corpus", str(tmp_path / "c.tsv"), "--local-files-only", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert FakeWhisper.instances == 1 and len(report["runs"]) == 6
+    assert (report["model"], report["compute_type"], report["cpu_threads"],
+            report["num_workers"], report["beam_size"]) == ("small", "int8", 8, 1, 5)
+    az = report["summary"]["az"]
+    edits = sum(r["wer_edits"] for r in report["runs"] if r["forced_language"] == "az")
+    words = sum(r["wer_ref_len"] for r in report["runs"] if r["forced_language"] == "az")
+    assert az["clips"] == 3 and az["pooled_wer"] == round(edits / words, 3)
+    assert az["detected_as_forced"] == 0  # fake detector hears az clips as 'tr'
+    assert report["runs"][0]["wer"] == 0.0 and report["summary"]["en"]["clips"] == 3
+    assert vb.main(["corpus", str(tmp_path / "c.tsv"), "--local-files-only"]) == 0
+    assert "summary (pooled over clips)" in capsys.readouterr().out

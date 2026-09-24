@@ -37,6 +37,12 @@ python bench/voice/voice_bench.py compare \
     --en bench/voice/recordings/en-01.wav --en-ref "<exactly what you said in English>" \
     --model small --threads 8 --beam-size 5
 
+# 5. fixed corpus: 3 az + 3 en clips, same model/settings, pooled WER/CER per language
+#    read the sentences in corpus.example.tsv exactly; record each for 10 s
+python bench/voice/voice_bench.py corpus bench/voice/corpus.example.tsv \
+    --model small --threads 8 --beam-size 5
+# TSV format: language<TAB>wav (relative to the TSV)<TAB>exact reference text
+
 # tests for this harness only
 python -m pytest -q bench/voice
 ```

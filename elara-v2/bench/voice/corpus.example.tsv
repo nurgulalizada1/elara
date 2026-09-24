@@ -1,0 +1,9 @@
+# ELARA STT corpus: language<TAB>wav (relative to this file)<TAB>exact reference text
+# Read each sentence exactly as written, at normal speed, same mic and distance.
+# az1/en1: everyday, az2/en2: research request, az3/en3: technical vocabulary.
+az	recordings/az-c1.wav	Salam ELARA, bu gün hava necə olacaq? Axşam saat yeddidə mənə xatırlat ki, anama zəng etməliyəm.
+az	recordings/az-c2.wav	PubMed-də BRCA1 geni və döş xərçəngi haqqında son məqalələri tap və ilk üç nəticənin başlığını göstər.
+az	recordings/az-c3.wav	Hesablama biologiyası statistika, maşın öyrənməsi və genomikanı birləşdirərək tək hüceyrəli sekvenləşdirmə məlumatlarını təhlil edir.
+en	recordings/en-c1.wav	Hello ELARA, what will the weather be like today? Remind me at seven in the evening that I need to call my mother.
+en	recordings/en-c2.wav	Search PubMed for recent papers about the BRCA1 gene and breast cancer and show me the titles of the first three results.
+en	recordings/en-c3.wav	Computational biology combines statistics, machine learning and genomics to analyze single cell sequencing data.

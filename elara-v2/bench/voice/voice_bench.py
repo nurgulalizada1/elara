@@ -12,6 +12,7 @@ Subcommands:
   record     --seconds N --out F  record a clip (16 kHz, mono, 16-bit PCM)
   transcribe WAV --model small    transcribe with faster-whisper on CPU (int8, language=az)
   compare --az A.wav --en B.wav   same model/config on an Azerbaijani and an English clip
+  corpus FILE.tsv                 same model/config on a small fixed corpus (lang, wav, reference)
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import warnings
 import wave
 from array import array
@@ -200,8 +202,10 @@ def run_one(model, wav: Path, language: str, beam_size: int, reference: str | No
                            "no_speech_prob": round(s.no_speech_prob, 3)} for s in seg_list]
     if reference:
         report["reference"] = reference
-        report["wer"] = error_rate(reference, report["text"], words=True)
-        report["cer"] = error_rate(reference, report["text"], words=False)
+        for key, words in (("wer", True), ("cer", False)):
+            edits, n = edit_stats(reference, report["text"], words=words, language=language)
+            report[key] = round(edits / n, 3) if n else None
+            report[f"{key}_edits"], report[f"{key}_ref_len"] = edits, n
     return report
 
 
@@ -225,22 +229,79 @@ def compare(clips: list[tuple[str, Path, str | None]], model_size: str, threads:
             "runs": [run_one(model, wav, lang, beam_size, ref) for lang, wav, ref in clips]}
 
 
-def error_rate(reference: str, hypothesis: str, *, words: bool) -> float | None:
-    """WER (words=True) or CER via edit distance, after lowercasing and stripping punctuation."""
-    def units(t: str) -> list[str]:
-        cleaned = re.sub(r"[^\w\s]", " ", t.casefold())
-        return cleaned.split() if words else list("".join(cleaned.split()))
+TURKIC = {"az", "tr"}
 
-    ref, hyp = units(reference), units(hypothesis)
-    if not ref:
-        return None
+
+def normalize(text: str, language: str | None = None) -> str:
+    """Deterministic normalization for WER/CER: NFC, language-aware lowercase, no punctuation.
+
+    For az/tr, 'I' -> 'ı' and 'İ' -> 'i' before lowercasing (plain casefold() would turn
+    'IŞIQ' into 'işiq' and 'İ' into 'i' + combining dot). Letters such as ə ı ş ç ğ ö ü are
+    kept; punctuation (incl. hyphens/apostrophes) becomes a word boundary on both sides.
+    """
+    text = unicodedata.normalize("NFC", text).replace("İ", "i")  # never 'i' + U+0307
+    if language in TURKIC:
+        text = text.replace("I", "ı")
+    text = unicodedata.normalize("NFC", text.lower())
+    return " ".join(re.sub(r"[^\w\s]|_", " ", text).split())
+
+
+def edit_stats(reference: str, hypothesis: str, *, words: bool,
+               language: str | None = None) -> tuple[int, int]:
+    """(edit distance, reference length) in words or characters (spaces excluded for CER)."""
+    ref_n, hyp_n = normalize(reference, language), normalize(hypothesis, language)
+    ref = ref_n.split() if words else list(ref_n.replace(" ", ""))
+    hyp = hyp_n.split() if words else list(hyp_n.replace(" ", ""))
     prev = list(range(len(hyp) + 1))
     for i, r in enumerate(ref, 1):
         cur = [i] + [0] * len(hyp)
         for j, h in enumerate(hyp, 1):
             cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (r != h))
         prev = cur
-    return round(prev[-1] / len(ref), 3)
+    return prev[-1], len(ref)
+
+
+def error_rate(reference: str, hypothesis: str, *, words: bool,
+               language: str | None = None) -> float | None:
+    """WER (words=True) or CER after normalize()."""
+    edits, n = edit_stats(reference, hypothesis, words=words, language=language)
+    return round(edits / n, 3) if n else None
+
+
+def read_corpus(path: Path) -> list[tuple[str, Path, str]]:
+    """TSV lines: language<TAB>wav<TAB>reference. '#' comments and blank lines ignored.
+    Relative WAV paths are resolved against the TSV file's directory."""
+    clips = []
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3 or not all(p.strip() for p in parts):
+            raise ValueError(f"{path}:{n}: expected 'language<TAB>wav<TAB>reference'")
+        lang, wav, ref = (p.strip() for p in parts)
+        wav_path = Path(wav) if Path(wav).is_absolute() else path.parent / wav
+        if not wav_path.exists():
+            raise ValueError(f"{path}:{n}: no such file: {wav_path}")
+        clips.append((lang, wav_path, ref))
+    if not clips:
+        raise ValueError(f"{path}: no clips")
+    return clips
+
+
+def summarize(runs: list[dict]) -> dict:
+    """Per-language pooled WER/CER (total edits / total reference length) and mean RTF."""
+    out: dict = {}
+    for lang in sorted({r["forced_language"] for r in runs}):
+        rs = [r for r in runs if r["forced_language"] == lang]
+        entry = {"clips": len(rs),
+                 "mean_rtf": round(sum(r["real_time_factor"] for r in rs) / len(rs), 3),
+                 "detected_as_forced": sum(r.get("detected_language") == lang for r in rs)}
+        for key in ("wer", "cer"):
+            n = sum(r.get(f"{key}_ref_len", 0) for r in rs)
+            entry[f"pooled_{key}"] = round(sum(r.get(f"{key}_edits", 0) for r in rs) / n, 3) \
+                if n else None
+        out[lang] = entry
+    return out
 
 
 def print_comparison(report: dict) -> None:
@@ -262,6 +323,12 @@ def print_comparison(report: dict) -> None:
             print(f"  ref:  {r['reference']}")
         for w in r["warnings"]:
             print(f"  warning: {w}")
+    if "summary" in report:
+        print("\nsummary (pooled over clips)")
+        for lang, e in report["summary"].items():
+            print(f"  {lang}: clips={e['clips']} WER={e['pooled_wer']} CER={e['pooled_cer']} "
+                  f"mean_RTF={e['mean_rtf']} detected_as_{lang}={e['detected_as_forced']}/"
+                  f"{e['clips']}")
 
 
 # ---------------------------------------------------------------------------- CLI -----
@@ -311,7 +378,13 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--threads", type=int, default=8)
     cp.add_argument("--beam-size", type=int, default=5)
     cp.add_argument("--local-files-only", action="store_true")
-    for sp in (mc, tr, cp):
+    co = sub.add_parser("corpus", help="run a fixed corpus (TSV: language, wav, reference)")
+    co.add_argument("tsv", type=Path)
+    co.add_argument("--model", choices=MODELS, default="small")
+    co.add_argument("--threads", type=int, default=8)
+    co.add_argument("--beam-size", type=int, default=5)
+    co.add_argument("--local-files-only", action="store_true")
+    for sp in (mc, tr, cp, co):
         sp.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
 
@@ -343,6 +416,19 @@ def main(argv: list[str] | None = None) -> int:
                 p.error(f"--threads must be between 1 and {os.cpu_count()}")
             report = compare([("az", args.az, args.az_ref), ("en", args.en, args.en_ref)],
                              args.model, args.threads, args.beam_size, args.local_files_only)
+            if args.json:
+                print(json.dumps(report, indent=2, ensure_ascii=False))
+            else:
+                print_comparison(report)
+        elif args.cmd == "corpus":
+            if not args.tsv.exists():
+                p.error(f"no such file: {args.tsv}")
+            if not 1 <= args.threads <= (os.cpu_count() or 1):
+                p.error(f"--threads must be between 1 and {os.cpu_count()}")
+            clips = read_corpus(args.tsv)
+            report = compare(clips, args.model, args.threads, args.beam_size,
+                             args.local_files_only)
+            report["summary"] = summarize(report["runs"])
             if args.json:
                 print(json.dumps(report, indent=2, ensure_ascii=False))
             else:
