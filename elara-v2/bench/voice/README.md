@@ -49,26 +49,51 @@ python -m pytest -q bench/voice
 
 ## Wake-word spike: "Hey ELARA" (`wakeword_bench.py`)
 
-This is an experiment and is not wired into `elara voice`. It detects the phrase with
-openWakeWord's frozen feature front end (`melspectrogram.onnx` + `embedding_model.onnx`, about
-2.4 MB), run directly with `onnxruntime`. faster-whisper already installs onnxruntime, so there
-are **no new Python packages**. There is no trained "Hey ELARA" model yet, so the spike uses
-**few-shot enrollment**: you record the phrase about 5 times, and the live audio is compared
-with those templates every 80 ms using DTW on the 96-dimensional embeddings. Whisper is never
-used, and no audio leaves the machine. Enrollment stores embeddings only, not audio.
+This is an experiment and is not wired into `elara voice`. It uses openWakeWord's frozen
+feature front end (`melspectrogram.onnx` + `embedding_model.onnx`, about 2.4 MB), run directly
+with `onnxruntime`. faster-whisper already installs onnxruntime, so there are **no new Python
+packages**. It works by **few-shot enrollment**: recordings of the phrase become templates, and
+the live audio is compared with them every 80 ms using subsequence DTW on the 96-dimensional
+embeddings. Whisper is never used, and no audio leaves the machine.
+
+Measurements come from labelled recordings, not from a single live run:
 
 ```bash
-python bench/voice/wakeword_bench.py fetch-models        # once; sha256-pinned, into bench/voice/models/
-python bench/voice/wakeword_bench.py selftest            # optional synthetic check (needs espeak-ng)
+python bench/voice/wakeword_bench.py fetch-models                 # once, sha256-pinned
 
-# 1. enroll: 5 x "Hey ELARA", then 15 s of normal talking WITHOUT the phrase (for the threshold)
-python bench/voice/wakeword_bench.py enroll --count 5 --neg-seconds 15 [--device N]
+# 1. real, labelled data on the laptop mic (~10 min, guided prompts):
+#    5 enrollment takes, 30 s calibration talk + one take of each confusable phrase,
+#    20 test positives (normal/fast/slow/quiet/loud), 2 takes of each hard negative
+#    (Hey Alexa / Hey Sarah / Hey Laura / Elara / What time is it?), 90 s conversation,
+#    180 s TV/background speech, 60 s silence
+python bench/voice/wakeword_bench.py collect --out bench/voice/recordings/ww_real [--device N]
 
-# 2. live test: say "Hey ELARA" a few times, talk normally, stay quiet; Ctrl+C to stop early
-python bench/voice/wakeword_bench.py listen --seconds 60 [--device N]
+# 2. score every decision rule: TP/FP/FN, precision, recall (95% CI), false activations/h
+#    (with its 95% upper bound), latency, CPU; also writes templates for `listen`
+python bench/voice/wakeword_bench.py evaluate --set bench/voice/recordings/ww_real \
+    --save-templates bench/voice/recordings/hey_elara_templates.npz
+
+# 3. live: every candidate is printed with distance, threshold, best template, top-3
+#    template distances, run length, nearby matches, matched duration, latency, compute;
+#    repeats of one event are marked. --save-wav keeps the session for offline `scan`.
+python bench/voice/wakeword_bench.py listen --rule robust --seconds 120 --save-wav /tmp/ww.wav
+python bench/voice/wakeword_bench.py scan --rule robust /tmp/ww.wav
+
+# synthetic sanity set (espeak-ng voices; NOT a substitute for real recordings)
+python bench/voice/wakeword_bench.py synth --out bench/voice/recordings/ww_synth
+python bench/voice/wakeword_bench.py evaluate --set bench/voice/recordings/ww_synth
 ```
 
-`listen` prints each detection with its DTW distance and how long after the end of the speech
-it fired. At the end it prints the compute time per 80 ms chunk and the process CPU as a
-percentage of one core. To score recorded WAVs offline (for example clips from `voice_bench.py
-record`), use `eval --pos a.wav ... --neg b.wav`.
+Decision rules (`--rule`):
+
+| Rule | What it does |
+|---|---|
+| `legacy` | The original spike: minimum over templates and 3 fixed window lengths; fires on one chunk |
+| `nearest` | Subsequence DTW against the nearest template; fires on one chunk |
+| `k2` | Mean distance to the 2 nearest templates |
+| `robust` | `k2`, plus 2 consecutive qualifying chunks and a matched duration of 0.6–1.6× the template |
+
+The threshold is calibrated only from enrollment data: leave-one-out scores of the
+enrollment takes against the rule's firing level on the calibration talk and the
+confusable phrases. The test clips never influence it. Recordings stay in
+`recordings/` (git-ignored); delete them when you are done.
